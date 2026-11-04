@@ -1,0 +1,17 @@
+@import url("theme.css");
+@define-color window_bg_color @simple_bg;
+@define-color theme_bg_color @simple_bg;
+@define-color theme_fg_color @simple_fg;
+@define-color theme_selected_bg_color @simple_accent;
+@define-color theme_selected_fg_color @simple_on_accent;
+@define-color accent_color @simple_accent;
+@define-color accent_bg_color @simple_accent;
+@define-color accent_fg_color @simple_on_accent;
+@define-color error_bg_color @simple_error;
+@define-color error_fg_color @simple_bg;
+@define-color status_attention @simple_attention;
+@define-color status_success @simple_success;
+@define-color status_error @simple_error;
+@define-color status_selection @simple_selection;
+@define-color status_hover @simple_hover_overlay;
+@define-color status_border @simple_border;

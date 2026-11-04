@@ -1,0 +1,7 @@
+[lock]
+pam_service = "login"
+visualizer = false
+
+[idle]
+enabled = false
+idle_seconds = 160

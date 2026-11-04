@@ -1,0 +1,8 @@
+# Shared application choices. Empty arrays use desktop defaults / auto-detection.
+# Commands are argument arrays, never shell strings.
+[applications]
+terminal = [] # example: ["konsole", "-e"] or ["kitty", "--"]
+browser = []  # example: ["firefox"]
+file_manager = [] # example: ["dolphin"]
+media_player = [] # external files; Simpleplayer itself always uses mpv
+mail = [] # use the desktop mail handler

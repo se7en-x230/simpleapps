@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Simpleplayer
+Comment=Music library, album art and playback controls
+Exec=simpleplayer
+Icon=multimedia-player
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+StartupWMClass=com.go7.Simpleplayer

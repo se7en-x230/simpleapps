@@ -1,0 +1,15 @@
+# Independent Simplelock settings. Image paths are relative to this file,
+# or can be absolute or start with ~/.
+[lock]
+pam_service = "login"
+visualizer = true
+# Picture beside the calendar while music plays (profile/monk).
+playing_image = "images/profile.png"
+# Picture beside the calendar when paused, stopped, or idle.
+idle_image = "images/no-playing.png"
+# Large album-art card when paused, stopped, or idle.
+album_idle_image = "images/album-idle.png"
+
+[idle]
+enabled = true
+idle_seconds = 160

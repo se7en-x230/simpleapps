@@ -1,0 +1,36 @@
+window.simpleplayer { background: @simple_bg; color: @simple_fg; }
+.simpleplayer .player-layout { padding: 24px; }
+.simpleplayer .eyebrow { color: @simple_muted; font-size: 10px; font-weight: 700; letter-spacing: 1.4px; }
+.simpleplayer .headline { font-size: 25px; font-weight: 700; }
+.simpleplayer .crumb, .simpleplayer .message { color: @simple_muted; font-size: 11px; }
+.simpleplayer entry { background: @simple_surface; color: @simple_fg; border: 1px solid @simple_border; border-radius: 10px; padding: 10px; box-shadow: none; }
+.simpleplayer button { background: @simple_button; color: @simple_fg; border: none; border-radius: 9px; padding: 9px 13px; box-shadow: none; }
+.simpleplayer button:hover { background: @simple_hover; }
+.simpleplayer button.primary { background: @simple_accent; color: @simple_on_accent; font-weight: 600; }
+.simpleplayer button.primary:hover { background: @simple_accent_hover; }
+.simpleplayer button:disabled { opacity: .4; }
+.simpleplayer list, .simpleplayer row { background: transparent; color: @simple_fg; }
+.simpleplayer row { border-radius: 10px; margin-bottom: 3px; }
+.simpleplayer row:hover { background: @simple_surface; }
+.simpleplayer row:selected { background: @simple_selection; }
+.simpleplayer .music-row { padding: 9px 10px; }
+.simpleplayer .genre-icon { color: @simple_accent; background: alpha(@simple_accent, .10); border-radius: 9px; padding: 8px; }
+.simpleplayer .row-title { font-size: 14px; font-weight: 600; }
+.simpleplayer .row-detail { color: @simple_muted; font-size: 11px; }
+.simpleplayer .chevron { color: @simple_muted; opacity: .6; }
+.simpleplayer .empty { color: @simple_muted; padding: 20px; }
+.simpleplayer .now-playing, .simpleplayer .library-card { background: @simple_surface; border: 1px solid @simple_border; border-radius: 14px; padding: 16px; }
+.simpleplayer scrollbar { background: transparent; }
+.simpleplayer scrollbar slider { background: @simple_border; min-width: 4px; border-radius: 3px; }
+
+.simpleplayer .album-art { background: @simple_bg; border-radius: 10px; }
+.simpleplayer .empty-art { color: @simple_muted; opacity: .4; }
+.simpleplayer .visualizer { color: @simple_visualizer; }
+
+.simpleplayer .track-title { font-size: 18px; font-weight: 700; }
+.simpleplayer .artist-name { font-size: 17px; font-weight: 600; }
+.simpleplayer .album-name { font-size: 15px; }
+.simpleplayer .album-year { font-size: 13px; color: @simple_muted; }
+
+.simpleplayer .track-details { padding: 12px 8px; }
+.simpleplayer .song-progress { margin-bottom: 6px; }

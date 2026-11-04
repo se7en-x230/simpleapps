@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=SimpleCalendar
+Comment=Calendar, agenda and event reminders
+Exec=simple-calendar
+Icon=x-office-calendar
+Terminal=false
+Categories=Office;Calendar;
+StartupWMClass=space.go7.SimpleCalendar

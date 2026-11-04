@@ -1,0 +1,19 @@
+window.simple-contacts-app { background:@simple_bg; color:@simple_fg; }
+window.simple-contacts-app label:not(.heading):not(.section) { color:@simple_fg; }
+window.simple-contacts-app .heading { font-size:1.25rem; font-weight:bold; }
+window.simple-contacts-app .section { font-weight:bold; margin-top:8px; }
+window.simple-contacts-app .muted { color:@simple_muted; font-size:.9rem; }
+window.simple-contacts-app button, window.simple-contacts-app entry, window.simple-contacts-app textview {
+ background:@simple_button; color:@simple_fg; border:1px solid @simple_border; border-radius:8px; padding:6px 10px;
+}
+window.simple-contacts-app text { background:@simple_button; color:@simple_fg; }
+window.simple-contacts-app button:hover { background:@simple_hover; }
+window.simple-contacts-app button.primary { background:@simple_accent; color:@simple_on_accent; }
+window.simple-contacts-app button.primary label { color:@simple_on_accent; }
+window.simple-contacts-app .contact-list-frame { background:@simple_surface; border:1px solid @simple_border; border-radius:10px; }
+window.simple-contacts-app row:selected { background:@simple_accent; }
+window.simple-contacts-app row:selected label { color:@simple_on_accent; }
+window.simple-contacts-app button:focus-visible, window.simple-contacts-app entry:focus-within { outline:2px solid @simple_attention; outline-offset:-2px; }
+
+/* Frame only the viewport, never the many-thousand-pixel list surface. */
+window.simple-contacts-app .contact-list { background:transparent; border:0; border-radius:0; box-shadow:none; }

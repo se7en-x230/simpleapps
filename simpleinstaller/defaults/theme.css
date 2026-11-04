@@ -1,0 +1,347 @@
+/* SIMPLE THEME — edit this file to style the entire Simple suite.
+   Colors below apply to menus, info, dashboard, lock, mail, panel and OSD.
+   Keep semantic colors distinct so errors and status remain recognizable. */
+@define-color simple_bg #2a2a2a;
+@define-color simple_surface #333333;
+@define-color simple_button #3b3b3b;
+@define-color simple_hover #454545;
+@define-color simple_selected #464646;
+@define-color simple_border #49454a;
+@define-color simple_fg #e4ded2;
+@define-color simple_bright #f2eadf;
+@define-color simple_muted #928374;
+@define-color simple_accent #8B0000;
+/* Secondary accent: active panel tag and its hover highlight. */
+@define-color simple_panel_accent #f3a40a;
+/* Shared app headings; app styles inherit this default. */
+@define-color simple_heading @simple_panel_accent;
+@define-color simple_accent_hover #d90000;
+@define-color simple_on_accent #fff5ef;
+@define-color simple_attention #f4c76a;
+@define-color simple_success #91c48b;
+@define-color simple_error #e57373;
+@define-color simple_graph_cpu @simple_attention;
+@define-color simple_graph_memory @simple_success;
+@define-color simple_graph_disk #b09cd6;
+@define-color simple_graph_download #6ebad6;
+@define-color simple_graph_upload @simple_attention;
+@define-color simple_visualizer #d79947;
+
+/* CALENDAR — shared by dashboard, lock and calendar popups. */
+@define-color simple_calendar_moon #e9a04b;
+@define-color simple_calendar_buddhist #f4c76a;
+@define-color simple_calendar_christian #91c48b;
+@define-color simple_calendar_other @simple_fg;
+@define-color simple_calendar_popup_bg @simple_surface;
+@define-color simple_calendar_popup_fg @simple_bright;
+
+/* LOCK — appearance controls. Defaults follow the shared palette.
+   Set a literal color here only when the lock should differ from other apps. */
+@define-color simple_lock_accent @simple_accent;
+@define-color simple_lock_top mix(@simple_bg, @simple_lock_accent, .35);
+@define-color simple_lock_bottom shade(@simple_bg, .25);
+@define-color simple_lock_glow @simple_lock_accent;
+@define-color simple_lock_horizon @simple_visualizer;
+@define-color simple_lock_card @simple_surface;
+@define-color simple_lock_text @simple_fg;
+@define-color simple_lock_attention @simple_attention;
+@define-color simple_lock_visualizer @simple_visualizer;
+@define-color simple_lock_visualizer_high @simple_lock_accent;
+@define-color simple_lock_password_bg shade(@simple_surface,.72);
+@define-color simple_lock_password_text @simple_fg;
+@define-color simple_lock_password_border shade(@simple_border,.65);
+@define-color simple_lock_password_focus @simple_lock_accent;
+@define-color simple_lock_password_caret @simple_lock_accent;
+@define-color simple_selection alpha(@simple_fg, .10);
+@define-color simple_hover_overlay alpha(@simple_fg, .16);
+
+/* Font for every Simple app. Headings and compact hints use relative sizes. */
+window.simplepicker, window.simplepicker-power, window.simple-sound,
+window.dashboard, window.simplelock, window.simplemail,
+window.simplepanel, window.simplepanel-osd, window.simplekeyboard {
+    font-family: sans-serif;
+    font-size: 14px;
+}
+/* Common rounding: change these values here, not in each app's CSS. */
+window.simplepicker .box-wrapper, window.simplepicker-power > box > box,
+window.simple-sound, window.dashboard .dashboard-panel,
+window.simplelock .dashboard-panel, window.simplemail { border-radius: 18px; }
+window.simplepicker .item-box, window.simple-sound .sound-card,
+window.dashboard .dash-system, window.dashboard .dash-calendar,
+window.simplelock .lock-card, window.simplelock .dash-system,
+window.simplelock .dash-calendar, window.simplepanel-osd .volume-osd-card { border-radius: 12px; }
+window.simple-sound button, window.simplemail button,
+window.simplemail entry, window.simplelock .lock-password,
+window.simplepanel .panel-section { border-radius: 9px; }
+
+/* Lock appearance. Its own CSS keeps geometry and optional local overrides. */
+window.simplelock { background:@simple_bg; color:@simple_lock_text; }
+window.simplelock .dashboard-panel { background:@simple_bg; color:@simple_lock_text; border:1px solid @simple_border; }
+window.simplelock label { color:@simple_lock_text; }
+window.simplelock .dash-clock { color:@simple_bright; }
+window.simplelock .dash-key { color:@simple_lock_attention; opacity:.8; }
+window.simplelock .dash-system, window.simplelock .dash-calendar { background:@simple_lock_card; }
+window.simplelock .dash-visualizer { color:@simple_lock_visualizer; }
+window.simplelock .dash-visualizer-high { color:@simple_lock_visualizer_high; }
+window.simplelock calendar label:selected { background:@simple_lock_accent; color:@simple_bright; }
+window.simplelock calendar .today { color:@simple_lock_accent; }
+window.simplelock.screensaver { background:transparent; }
+window.simplelock.screensaver .dashboard-panel { background:transparent; border:0; box-shadow:none; border-radius:24px; }
+window.simplelock.screensaver .dash-system { background:alpha(@simple_lock_card,.78); }
+window.simplelock.screensaver .dash-calendar, window.simplelock.screensaver .dash-status-card { background:alpha(@simple_lock_card,.82); }
+window.simplelock.screensaver .dash-info, window.simplelock.screensaver .dash-value { font-size:1rem; }
+window.simplelock.screensaver .dash-key { font-size:0.8571rem; }
+window.simplelock.screensaver calendar { font-size:1.0714rem; }
+window.simplelock .dash-calendar { border-radius:12px; }
+window.simplelock .dash-status-card { border-radius:8px; }
+window.simplelock .dash-album-card { border-radius:18px; }
+window.simplelock .lock-card { background:alpha(@simple_lock_card,.94); border-radius:12px; }
+window.simplelock .lock-feedback { color:@simple_lock_attention; font-size:0.9286rem; }
+window.simplelock .lock-password {
+    background:@simple_lock_password_bg; color:@simple_lock_password_text;
+    font-size:1rem; border-radius:9px;
+    border:1px solid @simple_lock_password_border;
+    border-bottom-color:alpha(@simple_lock_password_text,.22);
+    outline:none;
+    box-shadow:inset 0 2px 4px alpha(black,.55), inset 0 1px 1px alpha(black,.35), 0 1px 0 alpha(@simple_lock_password_text,.08);
+}
+window.simplelock .lock-password:focus-within {
+    border-color:@simple_lock_password_focus;
+    outline:1px solid @simple_lock_password_focus; outline-offset:0;
+}
+window.simplelock .lock-password text {
+    background:transparent; color:@simple_lock_password_text;
+    caret-color:@simple_lock_password_caret; border:0; outline:none; box-shadow:none;
+}
+window.simplelock .lock-password text:focus { border:0; outline:none; }
+window.simplelock .lock-password selection { background:@simple_selected; color:@simple_lock_password_text; }
+
+/* Common defaults also work when an app has no stylesheet. App CSS is optional. */
+window.simplekeyboard, window.simple-sound { background:@simple_bg; color:@simple_fg; }
+window.simplekeyboard label, window.simple-sound label { color:@simple_fg; }
+window.simplekeyboard button, window.simple-sound button,
+window.simplemail button, window.simplemail entry, window.simplekeyboard entry {
+    background:@simple_button; color:@simple_fg; border:1px solid @simple_border;
+    border-radius:9px; box-shadow:none;
+}
+window.simplekeyboard button:hover, window.simple-sound button:hover { background:@simple_hover; }
+window.simplekeyboard button:focus-visible, window.simple-sound button:focus-visible {
+    border-color:@simple_accent; outline:2px solid @simple_accent; outline-offset:-3px;
+}
+window.simplekeyboard .title { color:@simple_heading; font-size:1.5714rem; font-weight:bold; }
+window.simplekeyboard .muted { color:@simple_muted; font-size:0.7857rem; }
+window.simplepicker .box-wrapper, window.simplepicker-power > box > box,
+window.dashboard .dashboard-panel { background:@simple_bg; color:@simple_fg; border:1px solid @simple_border; }
+window.simplepicker label, window.dashboard label { color:@simple_fg; }
+window.simplepicker .item-box { color:@simple_fg; }
+window.simplepicker row:selected .item-box { background:@simple_selected; }
+window.simplepicker entry { background:@simple_surface; color:@simple_fg; caret-color:@simple_accent; }
+window.simplepicker image { color:@simple_accent; }
+window.simplepicker-power button { background:@simple_button; color:@simple_fg; }
+window.simplepicker-power button:hover { background:@simple_hover; }
+window.dashboard .dash-system, window.simple-sound .sound-card { background:@simple_surface; }
+window.dashboard calendar .today { color:@simple_accent; }
+window.simplemail { background:@simple_bg; color:@simple_fg; }
+window.simplepanel { color:@simple_fg; }
+window.simplepanel .tag.active { color:@simple_panel_accent; background:alpha(@simple_panel_accent,.12); }
+window.simplepanel-osd .volume-osd-card { background:alpha(@simple_bg,.80); }
+window.simplepanel-osd progress { background:@simple_accent; }
+
+/* Shared calendar annotations; app CSS can override these selectors. */
+window.dashboard calendar .day-number:checked,
+window.simplelock calendar .day-number:checked {
+    font-weight: bold;
+    box-shadow: none;
+}
+window.dashboard calendar .day-number:checked:not(:selected),
+window.simplelock calendar .day-number:checked:not(:selected) {
+    background: transparent; color: @simple_fg;
+}
+window.dashboard .simple-calendar-details,
+window.simplelock .simple-calendar-details { padding: 0 12px; }
+window.dashboard .simple-calendar-events,
+window.simplelock .simple-calendar-events { color: @simple_fg; font-size: 0.9286rem; }
+window.dashboard .simple-calendar-next,
+window.simplelock .simple-calendar-next { color: @simple_muted; font-size: 0.8571rem; }
+window.dashboard .simple-calendar-warning,
+window.simplelock .simple-calendar-warning { color: @simple_attention; font-size: 0.8571rem; }
+
+window.dashboard .simple-calendar-events .simple-calendar-other,
+window.simplelock .simple-calendar-events .simple-calendar-other,
+.simple-calendar-popup .simple-calendar-other { color: @simple_calendar_other; }
+window.dashboard calendar .day-number.simple-calendar-other:not(:selected):not(.today),
+window.simplelock calendar .day-number.simple-calendar-other:not(:selected):not(.today) { color: @simple_calendar_other; }
+window.dashboard calendar .day-number.simple-calendar-other,
+window.simplelock calendar .day-number.simple-calendar-other { box-shadow: inset 0 -2px @simple_calendar_other; }
+
+window.dashboard .simple-calendar-events .simple-calendar-moon,
+window.simplelock .simple-calendar-events .simple-calendar-moon,
+.simple-calendar-popup .simple-calendar-moon { color: @simple_calendar_moon; }
+window.dashboard calendar .day-number.simple-calendar-moon:not(:selected):not(.today),
+window.simplelock calendar .day-number.simple-calendar-moon:not(:selected):not(.today) { color: @simple_calendar_moon; }
+window.dashboard calendar .day-number.simple-calendar-moon,
+window.simplelock calendar .day-number.simple-calendar-moon { box-shadow: inset 0 -2px @simple_calendar_moon; }
+
+window.dashboard .simple-calendar-events .simple-calendar-christian,
+window.simplelock .simple-calendar-events .simple-calendar-christian,
+.simple-calendar-popup .simple-calendar-christian { color: @simple_calendar_christian; }
+window.dashboard calendar .day-number.simple-calendar-christian:not(:selected):not(.today),
+window.simplelock calendar .day-number.simple-calendar-christian:not(:selected):not(.today) { color: @simple_calendar_christian; }
+window.dashboard calendar .day-number.simple-calendar-christian,
+window.simplelock calendar .day-number.simple-calendar-christian { box-shadow: inset 0 -2px @simple_calendar_christian; }
+
+window.dashboard .simple-calendar-events .simple-calendar-buddhist,
+window.simplelock .simple-calendar-events .simple-calendar-buddhist,
+.simple-calendar-popup .simple-calendar-buddhist { color: @simple_calendar_buddhist; }
+window.dashboard calendar .day-number.simple-calendar-buddhist:not(:selected):not(.today),
+window.simplelock calendar .day-number.simple-calendar-buddhist:not(:selected):not(.today) { color: @simple_calendar_buddhist; }
+window.dashboard calendar .day-number.simple-calendar-buddhist,
+window.simplelock calendar .day-number.simple-calendar-buddhist { box-shadow: inset 0 -2px @simple_calendar_buddhist; }
+window.dashboard calendar .day-number.simple-calendar-moon.simple-calendar-buddhist,
+window.simplelock calendar .day-number.simple-calendar-moon.simple-calendar-buddhist { box-shadow: inset 0 -2px @simple_calendar_moon, inset 0 -4px @simple_calendar_buddhist; }
+window.dashboard calendar .day-number.simple-calendar-moon.simple-calendar-christian,
+window.simplelock calendar .day-number.simple-calendar-moon.simple-calendar-christian { box-shadow: inset 0 -2px @simple_calendar_moon, inset 0 -4px @simple_calendar_christian; }
+window.dashboard calendar .day-number.simple-calendar-moon.simple-calendar-other,
+window.simplelock calendar .day-number.simple-calendar-moon.simple-calendar-other { box-shadow: inset 0 -2px @simple_calendar_moon, inset 0 -4px @simple_calendar_other; }
+window.dashboard calendar .day-number.simple-calendar-buddhist.simple-calendar-christian,
+window.simplelock calendar .day-number.simple-calendar-buddhist.simple-calendar-christian { box-shadow: inset 0 -2px @simple_calendar_buddhist, inset 0 -4px @simple_calendar_christian; }
+window.dashboard calendar .day-number.simple-calendar-buddhist.simple-calendar-other,
+window.simplelock calendar .day-number.simple-calendar-buddhist.simple-calendar-other { box-shadow: inset 0 -2px @simple_calendar_buddhist, inset 0 -4px @simple_calendar_other; }
+window.dashboard calendar .day-number.simple-calendar-christian.simple-calendar-other,
+window.simplelock calendar .day-number.simple-calendar-christian.simple-calendar-other { box-shadow: inset 0 -2px @simple_calendar_christian, inset 0 -4px @simple_calendar_other; }
+window.dashboard calendar .day-number.simple-calendar-moon.simple-calendar-buddhist.simple-calendar-christian,
+window.simplelock calendar .day-number.simple-calendar-moon.simple-calendar-buddhist.simple-calendar-christian { box-shadow: inset 0 -2px @simple_calendar_moon, inset 0 -4px @simple_calendar_buddhist, inset 0 -6px @simple_calendar_christian; }
+window.dashboard calendar .day-number.simple-calendar-moon.simple-calendar-buddhist.simple-calendar-other,
+window.simplelock calendar .day-number.simple-calendar-moon.simple-calendar-buddhist.simple-calendar-other { box-shadow: inset 0 -2px @simple_calendar_moon, inset 0 -4px @simple_calendar_buddhist, inset 0 -6px @simple_calendar_other; }
+window.dashboard calendar .day-number.simple-calendar-moon.simple-calendar-christian.simple-calendar-other,
+window.simplelock calendar .day-number.simple-calendar-moon.simple-calendar-christian.simple-calendar-other { box-shadow: inset 0 -2px @simple_calendar_moon, inset 0 -4px @simple_calendar_christian, inset 0 -6px @simple_calendar_other; }
+window.dashboard calendar .day-number.simple-calendar-buddhist.simple-calendar-christian.simple-calendar-other,
+window.simplelock calendar .day-number.simple-calendar-buddhist.simple-calendar-christian.simple-calendar-other { box-shadow: inset 0 -2px @simple_calendar_buddhist, inset 0 -4px @simple_calendar_christian, inset 0 -6px @simple_calendar_other; }
+window.dashboard calendar .day-number.simple-calendar-moon.simple-calendar-buddhist.simple-calendar-christian.simple-calendar-other,
+window.simplelock calendar .day-number.simple-calendar-moon.simple-calendar-buddhist.simple-calendar-christian.simple-calendar-other { box-shadow: inset 0 -2px @simple_calendar_moon, inset 0 -4px @simple_calendar_buddhist, inset 0 -6px @simple_calendar_christian, inset 0 -8px @simple_calendar_other; }
+
+window.dashboard .simple-calendar-next.simple-calendar-moon,
+window.simplelock .simple-calendar-next.simple-calendar-moon { color: @simple_calendar_moon; }
+/* Tooltips are separate windows, so these selectors must not require a dashboard ancestor. */
+tooltip.background {
+    background: @simple_calendar_popup_bg; background-image: none;
+    color: @simple_calendar_popup_fg; opacity: 1;
+    border: 1px solid @simple_border; border-radius: 10px;
+}
+tooltip label { color: @simple_calendar_popup_fg; }
+.simple-calendar-popup {
+    background: @simple_calendar_popup_bg; background-image: none;
+    color: @simple_calendar_popup_fg; opacity: 1;
+    padding: 12px 16px; border-radius: 9px;
+}
+.simple-calendar-popup label { font-size: 0.9286rem; }
+
+/* Keyboard calendar focus and help; app styles may override. */
+window.dashboard .dash-calendar:focus-within,
+window.simplelock .dash-calendar:focus-within { outline: 2px solid @simple_accent; outline-offset: 2px; }
+window.dashboard .simple-calendar-hint,
+window.simplelock .simple-calendar-hint { color: @simple_muted; font-size: 0.8571rem; }
+
+/* Date popups stay within the dashboard/lock surface and do not take focus. */
+.simple-calendar-popup {
+    border: 1px solid @simple_border;
+    box-shadow: 0 3px 12px alpha(black, .35);
+}
+.simple-calendar-popup .simple-calendar-warning { color: @simple_attention; }
+.simple-calendar-popup .simple-calendar-hint { color: @simple_muted; }
+
+/* SimpleCalendar: shared dashboard appearance. */
+/* Share the dashboard palette; no separate application color scheme. */
+window.simple-calendar-app { background:@simple_bg; color:@simple_fg; }
+window.simple-calendar-app label { color:@simple_fg; }
+window.simple-calendar-app .heading { color:@simple_heading; font-size:1.25rem; font-weight:bold; }
+window.simple-calendar-app .muted { color:mix(@simple_muted,@simple_fg,.30); font-size:.9rem; }
+window.simple-calendar-app .moon { color:@simple_calendar_moon; }
+window.simple-calendar-app .buddhist { color:@simple_calendar_buddhist; }
+window.simple-calendar-app .card { background:@simple_surface; border:1px solid @simple_border; border-radius:12px; padding:12px; }
+window.simple-calendar-app .card.active-event { border-color:@simple_accent; box-shadow:inset 3px 0 @simple_accent; }
+window.simple-calendar-app button, window.simple-calendar-app entry, window.simple-calendar-app dropdown {
+ background:@simple_button; color:@simple_fg; border:1px solid @simple_border; border-radius:9px; box-shadow:none;
+}
+window.simple-calendar-app button { padding:7px 12px; }
+window.simple-calendar-app button:hover { background:@simple_hover; }
+window.simple-calendar-app button:focus-visible, window.simple-calendar-app entry:focus-within,
+window.simple-calendar-app .card:focus-visible { outline:2px solid @simple_accent; outline-offset:-2px; }
+window.simple-calendar-app button.primary { background:@simple_accent; color:@simple_on_accent; }
+window.simple-calendar-app button.primary:hover { background:shade(@simple_accent,1.25); }
+window.simple-calendar-app button.primary label { color:@simple_on_accent; }
+window.simple-calendar-app text, window.simple-calendar-app textview { background:@simple_surface; color:@simple_fg; caret-color:@simple_bright; }
+window.simple-calendar-app selection { background:@simple_accent; color:@simple_on_accent; }
+window.simple-calendar-app calendar { padding:12px; font-size:1rem; background:@simple_surface; border:1px solid @simple_border; border-radius:12px; }
+window.simple-calendar-app calendar header { background:transparent; color:@simple_fg; border:0; }
+window.simple-calendar-app calendar .day-number:selected { background:@simple_accent; color:@simple_on_accent; border-radius:6px; }
+window.simple-calendar-app calendar .today:not(:selected) { color:@simple_attention; background:transparent; font-weight:bold; }
+window.simple-calendar-app calendar .day-number:checked { box-shadow:inset 0 -2px @simple_attention; }
+window.simple-calendar-app check { background:@simple_button; border:1px solid @simple_border; color:@simple_on_accent; }
+window.simple-calendar-app check:checked { background:@simple_accent; }
+
+/* Common application headings: keep their color here, not in app overrides. */
+window.simple-calendar-app .heading,
+window.simple-contacts-app .heading,
+window.simple-contacts-app .section,
+window.simplemail .heading,
+window.simpleplayer .headline { color:@simple_heading; }
+window.simple-calendar-app calendar .today:not(:selected) { color:@simple_panel_accent; background:transparent; }
+
+/* Shared rounded event marks and full-moon indicators. */
+@define-color simple_calendar_event_bg #243746;
+window.simple-calendar-app calendar .day-number:checked,
+window.dashboard calendar .day-number:checked,
+window.simplelock calendar .day-number:checked { background:@simple_calendar_event_bg; color:@simple_fg; border-radius:14px; box-shadow:inset 0 -2px @simple_calendar_moon; font-weight:normal; }
+window.simple-calendar-app calendar .day-number:checked:not(:selected),
+window.dashboard calendar .day-number:checked:not(:selected),
+window.simplelock calendar .day-number:checked:not(:selected) { background:@simple_calendar_event_bg; color:@simple_fg; box-shadow:inset 0 -2px @simple_calendar_moon; }
+window.simple-calendar-app calendar .day-number:selected,
+window.dashboard calendar .day-number:selected,
+window.simplelock calendar .day-number:selected { background:@simple_accent; color:@simple_on_accent; border-radius:6px; }
+window.simple-calendar-app calendar .day-number.simple-calendar-moon,
+window.dashboard calendar .day-number.simple-calendar-moon,
+window.simplelock calendar .day-number.simple-calendar-moon { border-radius:14px; }
+window.simple-calendar-app calendar .day-number:checked:selected,
+window.dashboard calendar .day-number:checked:selected,
+window.simplelock calendar .day-number:checked:selected { background:@simple_accent; color:@simple_on_accent; }
+
+window.simple-calendar-app calendar .day-number.simple-calendar-moon.simple-calendar-buddhist,
+window.simple-calendar-app calendar .day-number.simple-calendar-moon.simple-calendar-christian,
+window.simple-calendar-app calendar .day-number.simple-calendar-moon.simple-calendar-other,
+window.simple-calendar-app calendar .day-number.simple-calendar-buddhist.simple-calendar-other,
+window.simple-calendar-app calendar .day-number.simple-calendar-christian.simple-calendar-other,
+window.dashboard calendar .day-number.simple-calendar-moon.simple-calendar-buddhist,
+window.dashboard calendar .day-number.simple-calendar-moon.simple-calendar-christian,
+window.dashboard calendar .day-number.simple-calendar-moon.simple-calendar-other,
+window.dashboard calendar .day-number.simple-calendar-buddhist.simple-calendar-other,
+window.dashboard calendar .day-number.simple-calendar-christian.simple-calendar-other,
+window.simplelock calendar .day-number.simple-calendar-moon.simple-calendar-buddhist,
+window.simplelock calendar .day-number.simple-calendar-moon.simple-calendar-christian,
+window.simplelock calendar .day-number.simple-calendar-moon.simple-calendar-other,
+window.simplelock calendar .day-number.simple-calendar-buddhist.simple-calendar-other,
+window.simplelock calendar .day-number.simple-calendar-christian.simple-calendar-other { box-shadow:inset 0 -2px @simple_calendar_moon; }
+
+/* Keep calendar alignment while displaying only the current month. */
+window.simple-calendar-app calendar .day-number.other-month,
+window.dashboard calendar .day-number.other-month,
+window.simplelock calendar .day-number.other-month {
+  opacity: 0;
+}
+
+/* System dashboard: the same shared heading, surfaces and controls as Simple apps. */
+window.system-dashboard { background:@simple_bg; color:@simple_fg; }
+window.system-dashboard .dashboard-panel { background:@simple_bg; color:@simple_fg; padding:20px; border:0; border-radius:18px; }
+window.system-dashboard label { color:@simple_fg; font-size:1rem; }
+window.system-dashboard .dash-title { color:@simple_heading; font-size:1.25rem; font-weight:bold; margin-bottom:4px; }
+window.system-dashboard .dash-system { background:@simple_surface; border:1px solid @simple_border; border-radius:12px; padding:12px; }
+window.system-dashboard .dash-card-title { color:@simple_muted; font-size:.7857rem; font-weight:600; letter-spacing:1px; }
+window.system-dashboard .dash-key, window.system-dashboard .graph-caption { color:@simple_muted; font-size:.7857rem; }
+window.system-dashboard .world-time { font-size:1rem; }
+window.system-dashboard .market-card { padding:10px 14px; }
+window.system-dashboard .market-card label { font-size:.8571rem; }
+window.system-dashboard .gain { color:@simple_success; }
+window.system-dashboard .loss { color:@simple_error; }
+window.system-dashboard button.control-card { background:transparent; background-image:none; padding:0; border:0; border-radius:12px; box-shadow:none; outline:none; }
+window.system-dashboard button.control-card:hover .dash-system { background:@simple_hover; }
+window.system-dashboard button.control-card:focus-visible { outline:2px solid @simple_accent; outline-offset:2px; }

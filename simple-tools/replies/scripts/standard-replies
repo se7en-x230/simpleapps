@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+"""SSI standard replies: language, reply, clipboard paste; never send a message."""
+import os as _path_os, sys as _path_sys
+from pathlib import Path as _Path
+_roots=[_Path(__file__).resolve().parents[3],_Path(_path_os.environ.get('XDG_DATA_HOME',_Path.home()/'.local/share')),_Path.home()/'.local/src']
+if _path_os.environ.get('SIMPLE_SOURCE_ROOT'):_roots.insert(0,_Path(_path_os.environ['SIMPLE_SOURCE_ROOT']))
+for _root in reversed(_roots):
+    for _name in ('simplepicker/python','simple-common'):
+        if (_root/_name).is_dir():_path_sys.path.insert(0,str(_root/_name))
+import argparse
+import fcntl
+import json
+import os
+import re
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import time
+import tomllib
+
+LANGUAGES = {'en': 'E · English', 'de': 'D · Deutsch'}
+LANGUAGE_SUFFIXES = {'eng': 'en', 'ger': 'de'}
+IMAGE_TYPES = {'.webp': 'webp', '.png': 'png', '.jpg': 'jpeg', '.jpeg': 'jpeg'}
+QUICK_CHOICES = {'dsd': ('d', 'DSD'), 'fun': ('f', 'Fun'),
+                 'open1': ('1', 'OWD 1'), 'open2': ('2', 'OWD 2'),
+                 'schedule': ('s', 'Schedule')}
+
+
+def discover(root):
+    folder = root/'SSI'
+    if folder.is_symlink() or not folder.is_dir():
+        raise ValueError('NoteManager/SSI is unavailable or is a symlink.')
+    entries = {'en': {}, 'de': {}}
+    for path in sorted(folder.iterdir(), key=lambda p: p.name.casefold()):
+        if path.is_symlink() or not path.is_file(): continue
+        if path.suffix.lower() not in {'.md', *IMAGE_TYPES}: continue
+        match = re.fullmatch(r'(.+)-(eng|ger)', path.stem, re.IGNORECASE)
+        if not match: continue
+        name, suffix = match.groups()
+        if any(ord(c) < 32 for c in name): continue
+        # Keep familiar shortcuts for the existing reply names.
+        canonical = re.sub(r'^(Dsd|Fun)[DE]$', r'\1', name, flags=re.IGNORECASE)
+        canonical = re.sub(r'^Open[DE]?-?([12])$', r'open\1', canonical, flags=re.IGNORECASE)
+        if canonical.casefold() == 'schdule': canonical = 'schedule'
+        shortcut, label = QUICK_CHOICES.get(canonical.casefold(), ('', name.replace('_', ' ')))
+        entries[LANGUAGE_SUFFIXES[suffix.lower()]][path.name] = (label, shortcut)
+    return entries
+
+
+def menu_labels(entries):
+    counts = {}
+    for _, key in entries.values(): counts[key] = counts.get(key, 0) + 1
+    hotkeys = {key: name for name, (_, key) in entries.items() if key and counts[key] == 1}
+    labels = {name: ((key.upper()+' · ') if key in hotkeys else '')+label
+              for name, (label, key) in entries.items()}
+    return labels, hotkeys
+
+
+TERMINALS = {'kitty', 'foot', 'alacritty', 'wezterm', 'org.wezfurlong.wezterm', 'org.kde.konsole', 'xterm', 'st'}
+
+
+def notes_root():
+    config = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home()/'.config')/'notesmanager/config.toml'
+    try:
+        with config.open('rb') as f: settings = tomllib.load(f)
+    except FileNotFoundError: settings = {}
+    value = settings.get('notes_dir', '~/Sync/Shares/Documents/Notes')
+    if not isinstance(value, str) or not value.strip() or any(ord(c) < 32 for c in value):
+        raise ValueError('Invalid NoteManager notes_dir.')
+    path = Path(os.path.expandvars(value)).expanduser()
+    return (path if path.is_absolute() else config.parent/path).absolute()
+
+
+def reply_bytes(root, filename):
+    folder = root/'SSI'; path = folder/filename
+    if Path(filename).name != filename or folder.is_symlink() or path.is_symlink() or not path.resolve().is_relative_to(folder.resolve()):
+        raise ValueError('Reply must be a regular file inside NoteManager/SSI.')
+    if not path.is_file(): raise ValueError('Reply is unavailable: '+str(path))
+    limit = 20*1024*1024 if path.suffix.lower() in IMAGE_TYPES else 131072
+    with path.open('rb') as f: raw = f.read(limit+1)
+    if len(raw) > limit: raise ValueError('Reply is too large: '+path.name)
+    return raw
+
+
+def reply_text(root, filename):
+    text = reply_bytes(root, filename).decode('utf-8')
+    if not text.strip() or any(ord(c) < 32 and c not in '\n\r\t' for c in text):
+        raise ValueError('Reply must contain ordinary UTF-8 text: '+filename)
+    return text
+
+
+def reply_image(root, filename, preview=False):
+    kind = IMAGE_TYPES[Path(filename).suffix.lower()]
+    command = ['magick', '-limit', 'memory', '128MiB', '-limit', 'map', '256MiB', kind+':-[0]']
+    if preview: command += ['-thumbnail', '1000x700>']
+    result = subprocess.run(command+['png:-'], input=reply_bytes(root, filename),
+                            capture_output=True, check=True, timeout=15)
+    if not result.stdout.startswith(b'\x89PNG\r\n\x1a\n'):
+        raise ValueError('Could not decode image: '+filename)
+    return result.stdout
+
+
+def reply_payload(root, filename):
+    if Path(filename).suffix.lower() in IMAGE_TYPES:
+        return reply_image(root, filename), 'image/png'
+    return reply_text(root, filename).encode('utf-8'), 'text/plain;charset=utf-8'
+
+
+def matches(query, labels, hotkeys):
+    query = query.casefold().strip()
+    if query in hotkeys: return [hotkeys[query]]
+    return [key for key, label in labels.items() if all(word in label.casefold() for word in query.split())]
+
+
+def choose_reply(root, show_menu):
+    while True:
+        language = show_menu(lambda q: matches(q, LANGUAGES, {'e': 'en', 'd': 'de', 'en': 'en', 'de': 'de'}),
+                             labels=LANGUAGES, title='Standard replies', prompt='Language · e English · d Deutsch',
+                             width=460, height=240, auto_accept=True, default_icon='mail-reply-sender-symbolic')
+        if language is None: return None
+        if language not in LANGUAGES: raise ValueError('Unknown reply language.')
+        entries = discover(root)[language]
+        if not entries:
+            notify('No -eng or -ger replies found for this language.'); continue
+        labels, hotkeys = menu_labels(entries)
+        images = [name for name in entries if Path(name).suffix.lower() in IMAGE_TYPES]
+        reply = show_menu(lambda q: matches(q, labels, hotkeys),
+                          labels=labels, title='Standard replies · '+language.upper(),
+                          prompt='Search · d/f/1/2 replies · s schedule · Enter pastes',
+                          width=880, height=460, auto_accept=True, default_icon='mail-reply-sender-symbolic',
+                          text_preview=lambda item: reply_text(root, item),
+                          image_preview=lambda item: reply_image(root, item, preview=True), preview_rows=images,
+                          subtitles={name: name for name in entries},
+                          shortcuts=[('h', 'Language', 'back')])
+        if reply == 'back': continue
+        if reply is None: return None
+        if reply not in entries: raise ValueError('Unknown standard reply.')
+        return reply_payload(root, reply)
+
+
+def focused_client():
+    try:
+        result = subprocess.run(['mmsg', 'get', 'focusing-client'], capture_output=True, text=True, timeout=2, check=True)
+        client = json.loads(result.stdout)
+        if not isinstance(client, dict) or type(client.get('id')) is not int or not client.get('pid'):
+            raise ValueError('No focused window.')
+        return client
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def same_client(first, second):
+    return first is not None and second is not None and (first['id'], first['pid']) == (second['id'], second['pid'])
+
+
+def notify(message):
+    if shutil.which('notify-send'):
+        subprocess.run(['notify-send', '-a', 'Standard replies', 'Standard replies', message], capture_output=True)
+
+
+def copy_and_paste(payload, original):
+    data, mime = payload
+    subprocess.run(['wl-copy', '--type', mime], input=data, capture_output=True, check=True, timeout=5)
+    if original is None or original.get('appid', '').casefold() in TERMINALS:
+        notify('Copied. Focus your message field and press Ctrl+V.'); return False
+    # The picker closes before returning. Allow Wayland to restore keyboard focus;
+    # never paste into a different window if the user changed focus meanwhile.
+    time.sleep(0.2)
+    if not same_client(original, focused_client()):
+        notify('Copied. Window focus changed; press Ctrl+V where you want the reply.'); return False
+    helper = shutil.which('wtype')
+    if not helper:
+        helper = next((str(p) for p in (Path(os.environ.get('XDG_DATA_HOME',Path.home()/'.local/share'))/'simplepicker/wtype',) if os.access(p, os.X_OK)), None)
+    if not helper: raise ValueError('Reply copied, but Simplepicker’s paste helper is missing.')
+    subprocess.run([helper, '-M', 'ctrl', '-k', 'v', '-m', 'ctrl'], capture_output=True, check=True, timeout=5)
+    return True
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--check', action='store_true', help='Check discovered replies and images without opening a menu or copying')
+    args = parser.parse_args(); root = notes_root()
+    if args.check:
+        for language, entries in discover(root).items():
+            for filename in entries:
+                data, mime = reply_payload(root, filename)
+                print(language.upper()+': '+filename+' ('+str(len(data))+' bytes, '+mime+')')
+        return 0
+    state = Path(os.environ.get('XDG_RUNTIME_DIR') or Path.home()/'.cache')/'standard-replies.lock'
+    state.parent.mkdir(parents=True, exist_ok=True)
+    with state.open('w') as lock:
+        try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError: return 0
+        original = focused_client()
+        from ui import show_menu
+        text = choose_reply(root, show_menu)
+        if text is not None: copy_and_paste(text, original)
+    return 0
+
+
+if __name__ == '__main__':
+    try: sys.exit(main())
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        message = 'Reply operation failed: '+str(error)
+        print(message, file=sys.stderr); notify(message); sys.exit(1)

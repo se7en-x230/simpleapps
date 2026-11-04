@@ -1,0 +1,13 @@
+# Desktop integration is detected; ordinary GTK windows work without layer shell.
+[desktop]
+backend = "auto"
+[ui]
+layer_shell = "auto"
+[commands]
+open_url = ["simple-open", "browser", "{url}"]
+edit_bookmarks = ["simple-open", "terminal", "python3", "{editor}"]
+# Install wtype separately if you want automatic typing on a supported compositor.
+paste = ["wtype", "-s", "200", "-M", "ctrl", "-k", "v", "-m", "ctrl"]
+paste_terminal = ["wtype", "-s", "200", "-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl"]
+[screensaver]
+enabled = false

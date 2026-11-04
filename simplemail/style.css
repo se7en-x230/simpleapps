@@ -1,0 +1,21 @@
+window.simplemail { background:@simple_bg;color:@simple_fg; }
+.simplemail label:not(.heading), .simplemail textview text { color:@simple_fg; }
+.simplemail textview, .simplemail textview text, .simplemail list { background:@simple_bg; }
+.simplemail entry, .simplemail dropdown>button, .simplemail button { background:@simple_button;color:@simple_fg;border:1px solid @simple_border;box-shadow:none;text-shadow:none;padding:7px 10px; }
+.simplemail button:hover { background:@simple_hover; }
+.simplemail button:checked, .simplemail row:selected { background:@simple_selected;color:@simple_fg; }
+.simplemail button:focus-visible, .simplemail entry:focus-within { outline:2px solid @simple_accent;outline-offset:1px; }
+.simplemail selection { background:@simple_selected;color:@simple_fg; }
+.simplemail button.suggested-action { background:@simple_accent;color:@simple_on_accent; }
+.simplemail button.destructive-action { color:@simple_error; }
+.simplemail separator { background:@simple_border; }
+.simplemail image { color:@simple_accent; }
+
+    .simplemail-inbox .simplemail-subject { border: none; padding: 5px; }
+    .simplemail-inbox .simplemail-selected { background-color: rgba(255, 255, 255, 0.10); }
+    .simplemail-inbox .simplemail-read .simplemail-subject { color: @simple_bright; font-weight: bold; }
+    .simplemail-inbox .simplemail-replied .simplemail-subject { color: @theme_fg_color; font-weight: normal; }
+    .simplemail-inbox .simplemail-unread .simplemail-subject { color: @simple_attention; font-weight: bold; }
+    .simplemail-inbox .simplemail-unread .simplemail-sender { opacity: 1; font-weight: bold; }
+
+    .simplemail-inbox .simplemail-account-bar { min-width: 4px; border-radius: 2px; }

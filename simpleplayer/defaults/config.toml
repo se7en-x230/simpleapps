@@ -1,0 +1,21 @@
+# Music library. ~ and environment variables expand; spaces are supported.
+# Relative paths resolve from this config file's directory.
+music_dir = "~/Music"
+
+# Validate without opening the player or scanning the library:
+# simpleplayer --check-config
+# After changing the directory, the next launch rebuilds the folder index.
+# New music appears after Ctrl+R (Refresh library), or:
+# simpleplayer --refresh-library
+# Opening the menu never starts a background library scan.
+
+# Optional per-launch overrides:
+# SIMPLEPLAYER_MUSIC_DIR=/another/library simpleplayer
+# SIMPLEPLAYER_CONFIG=/path/to/other.toml simpleplayer
+# The old WALKERBEATS_MUSIC_DIR variable also remains supported.
+
+# Menus inherit the system/Simplepicker theme.
+[ui]
+width = 600
+height = 680
+icon_size = 28

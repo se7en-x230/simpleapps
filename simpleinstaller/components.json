@@ -1,0 +1,482 @@
+{
+  "schema": 2,
+  "components": {
+    "simplepicker": {
+      "name": "Simplepicker",
+      "description": "Application launcher, search and keyboard menus",
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
+      "runtime": [
+        "gtk4",
+        "gtk4-layer-shell",
+        "json-c",
+        "python",
+        "xdg-utils",
+        "wl-clipboard"
+      ],
+      "modules": [
+        "gtk4 >= 4.12",
+        "gtk4-layer-shell-0",
+        "gio-unix-2.0",
+        "json-c"
+      ],
+      "commands": [
+        "cc",
+        "make",
+        "pkg-config",
+        "python3",
+        "xdg-open",
+        "wl-copy"
+      ],
+      "optional": {
+        "calculator": {
+          "label": "Calculator",
+          "packages": [
+            "libqalculate"
+          ],
+          "commands": [
+            "qalc"
+          ]
+        }
+      },
+      "recipe": "picker",
+      "compatibility": "GTK window; Wayland layer-shell when available",
+      "imports": [],
+      "source_files": [
+        "Makefile",
+        "main.c"
+      ]
+    },
+    "simpleplayer": {
+      "name": "Simpleplayer",
+      "description": "Music library, artwork and mpv playback",
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
+      "runtime": [
+        "gtk4",
+        "json-c",
+        "python",
+        "mpv",
+        "util-linux",
+        "ffmpeg",
+        "xdg-utils",
+        "bash",
+        "coreutils",
+        "findutils"
+      ],
+      "modules": [
+        "gtk4 >= 4.12",
+        "json-c"
+      ],
+      "commands": [
+        "cc",
+        "make",
+        "pkg-config",
+        "python3",
+        "mpv",
+        "flock",
+        "ffmpeg",
+        "xdg-open",
+        "bash",
+        "find",
+        "sort",
+        "realpath"
+      ],
+      "optional": {
+        "visualizer": {
+          "label": "Audio visualization",
+          "packages": [
+            "cava"
+          ],
+          "commands": [
+            "cava"
+          ]
+        },
+        "youtube": {
+          "label": "YouTube streaming",
+          "packages": [
+            "yt-dlp"
+          ],
+          "commands": [
+            "yt-dlp"
+          ]
+        }
+      },
+      "recipe": "player",
+      "compatibility": "GTK desktop; PulseAudio/PipeWire for optional Cava",
+      "imports": [],
+      "source_files": [
+        "Makefile",
+        "native.c",
+        "install.py"
+      ]
+    },
+    "simplecalendar": {
+      "name": "Simplecalendar",
+      "description": "Calendar, recurring events and CalDAV sync",
+      "recipe": "organizer",
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
+      "runtime": [
+        "gtk4",
+        "json-c",
+        "python",
+        "python-icalendar",
+        "python-recurring-ical-events",
+        "python-requests",
+        "vdirsyncer",
+        "libnotify",
+        "xdg-utils"
+      ],
+      "modules": [
+        "gtk4 >= 4.12",
+        "json-c"
+      ],
+      "commands": [
+        "cc",
+        "make",
+        "pkg-config",
+        "python3",
+        "notify-send"
+      ],
+      "imports": [
+        "icalendar",
+        "recurring_ical_events",
+        "requests",
+        "vdirsyncer"
+      ],
+      "optional": {
+        "calendar_google": {
+          "label": "Google Calendar connection",
+          "packages": [
+            "python-aiohttp-oauthlib"
+          ],
+          "commands": [],
+          "imports": [
+            "aiohttp_oauthlib"
+          ]
+        }
+      },
+      "compatibility": "GTK desktop",
+      "after_install": "Connect your own account from Accounts. Run simple-calendar --watch for background reminders and sync; no account or service is enabled by installation.",
+      "source_files": [
+        "Makefile",
+        "bridge.py",
+        "main.py"
+      ]
+    },
+    "simplecontacts": {
+      "name": "Simplecontacts",
+      "description": "Google contacts with an offline local copy",
+      "recipe": "organizer",
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
+      "runtime": [
+        "gtk4",
+        "json-c",
+        "python",
+        "python-google-auth",
+        "python-requests",
+        "xdg-utils",
+        "wl-clipboard"
+      ],
+      "modules": [
+        "gtk4 >= 4.12",
+        "json-c"
+      ],
+      "commands": [
+        "cc",
+        "make",
+        "pkg-config",
+        "python3"
+      ],
+      "imports": [
+        "google.auth",
+        "requests"
+      ],
+      "optional": {},
+      "compatibility": "GTK desktop",
+      "after_install": "Connect your own Google account using a Desktop OAuth client JSON. No credentials are bundled.",
+      "source_files": [
+        "Makefile",
+        "bridge.py",
+        "main.py"
+      ]
+    },
+    "simplemail": {
+      "name": "Simplemail",
+      "description": "Native IMAP/SMTP mail and account setup",
+      "recipe": "mail",
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
+      "runtime": [
+        "gtk4",
+        "json-c",
+        "python",
+        "python-gobject",
+        "python-cryptography",
+        "xdg-utils",
+        "libnotify"
+      ],
+      "modules": [
+        "gtk4 >= 4.12",
+        "json-c"
+      ],
+      "commands": [
+        "cc",
+        "make",
+        "pkg-config",
+        "python3"
+      ],
+      "imports": [
+        "gi",
+        "cryptography"
+      ],
+      "optional": {
+        "mail_keepassxc": {
+          "label": "KeePassXC credential integration",
+          "packages": [
+            "keepassxc",
+            "python-dbus"
+          ],
+          "commands": [
+            "keepassxc"
+          ],
+          "imports": [
+            "dbus"
+          ]
+        }
+      },
+      "compatibility": "GTK desktop",
+      "after_install": "Add your own mail account with simplemail --setup. Installation does not connect, sync or send mail.",
+      "source_files": [
+        "Makefile",
+        "native.c",
+        "bridge.py"
+      ]
+    },
+    "simpletorrent": {
+      "name": "Simpletorrent",
+      "description": "Transmission download controls",
+      "recipe": "torrent",
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
+      "runtime": [
+        "gtk4",
+        "json-c",
+        "curl",
+        "transmission-cli"
+      ],
+      "modules": [
+        "gtk4 >= 4.12",
+        "json-c",
+        "libcurl"
+      ],
+      "commands": [
+        "cc",
+        "make",
+        "pkg-config",
+        "transmission-daemon"
+      ],
+      "imports": [],
+      "optional": {},
+      "compatibility": "GTK desktop",
+      "after_install": "Connect to your running local Transmission daemon. Start transmission-daemon separately if needed. Existing daemon settings and downloads are preserved; authenticated RPC is not supported yet.",
+      "source_files": [
+        "Makefile",
+        "main.c"
+      ]
+    },
+    "simplewallpaper": {
+      "name": "Simplewallpaper",
+      "description": "Static and sunrise-aware Wayland wallpaper",
+      "build": [],
+      "runtime": [
+        "python",
+        "awww",
+        "imagemagick"
+      ],
+      "modules": [],
+      "commands": [
+        "python3",
+        "awww",
+        "awww-daemon",
+        "magick"
+      ],
+      "optional": {
+        "daylight": {
+          "label": "Generated daylight wallpaper packs",
+          "packages": [
+            "python-astral"
+          ],
+          "commands": []
+        }
+      },
+      "recipe": "wallpaper",
+      "compatibility": "Wayland layer-shell (not the Plasma desktop wallpaper)",
+      "after_install": "Open Simplewallpaper; set your location before enabling daylight. Autostart is optional.",
+      "imports": [],
+      "source_files": [
+        "main.py",
+        "launcher",
+        "simplewallpaper.desktop"
+      ]
+    },
+    "simplepanel": {
+      "name": "Simplepanel",
+      "description": "Status panel and system dashboard",
+      "recipe": "panel",
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
+      "runtime": [
+        "gtk4",
+        "json-c",
+        "python",
+        "gtk4-layer-shell",
+        "libpulse",
+        "fastfetch"
+      ],
+      "modules": [
+        "gtk4 >= 4.12",
+        "json-c",
+        "gtk4-layer-shell-0",
+        "gio-unix-2.0",
+        "libpulse-mainloop-glib"
+      ],
+      "commands": [
+        "cc",
+        "make",
+        "pkg-config",
+        "python3",
+        "fastfetch"
+      ],
+      "imports": [],
+      "optional": {
+        "panel_visualizer": {
+          "label": "Panel audio visualization",
+          "packages": [
+            "cava"
+          ],
+          "commands": [
+            "cava"
+          ]
+        }
+      },
+      "compatibility": "Panel: Wayland layer-shell; workspace/title integration: Mango. Dashboard: normal GTK window.",
+      "after_install": "Application menu opens the system dashboard. Start simplepanel-session explicitly for the panel; no existing panel is replaced.",
+      "source_files": [
+        "Makefile",
+        "panel.c"
+      ]
+    },
+    "simplelock": {
+      "name": "Simplelock",
+      "description": "Wayland session lock with music and calendar",
+      "recipe": "lock",
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
+      "runtime": [
+        "gtk4",
+        "json-c",
+        "gtk4-layer-shell",
+        "pam"
+      ],
+      "modules": [
+        "gtk4 >= 4.12",
+        "json-c",
+        "gtk4-layer-shell-0 >= 1.2",
+        "gio-unix-2.0",
+        "pam"
+      ],
+      "commands": [
+        "cc",
+        "make",
+        "pkg-config"
+      ],
+      "imports": [],
+      "optional": {
+        "lock_visualizer": {
+          "label": "Lock-screen audio visualization",
+          "packages": [
+            "cava"
+          ],
+          "commands": [
+            "cava"
+          ]
+        }
+      },
+      "compatibility": "Wayland ext-session-lock-v1 and layer-shell; not X11 or KDE Plasma lock replacement.",
+      "after_install": "Run simplelock --check-config first. Uses the existing login PAM service; choose a suitable service in config.toml if needed. The installer never activates locking or edits PAM.",
+      "source_files": [
+        "Makefile",
+        "lock.c"
+      ]
+    },
+    "simple-tools": {
+      "name": "Simple tools",
+      "description": "Sound, network, disk, resources, displays and services",
+      "recipe": "tools",
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
+      "runtime": [
+        "python",
+        "python-gobject",
+        "gtk4",
+        "libpulse",
+        "networkmanager",
+        "bluez-utils",
+        "util-linux",
+        "wlr-randr",
+        "wl-clipboard",
+        "libnotify",
+        "sudo",
+        "gtk4-layer-shell",
+        "json-c",
+        "iproute2"
+      ],
+      "modules": [
+        "gtk4 >= 4.12",
+        "gtk4-layer-shell-0",
+        "gio-unix-2.0",
+        "json-c"
+      ],
+      "commands": [
+        "python3",
+        "pactl",
+        "nmcli",
+        "lsblk",
+        "wlr-randr",
+        "cc",
+        "make",
+        "pkg-config"
+      ],
+      "imports": [
+        "gi"
+      ],
+      "optional": {},
+      "compatibility": "Sound: PulseAudio/PipeWire; network: NetworkManager; displays: wlr-output-management; services: systemd/dinit.",
+      "after_install": "Uses your existing audio/network/service managers. Nothing is enabled or switched automatically; unsupported controls report the missing capability. The shared Picker menu engine is included; the Picker launcher itself is optional.",
+      "source_files": [
+        "launchers/simple-sound"
+      ]
+    }
+  }
+}

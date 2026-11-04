@@ -1,0 +1,8 @@
+[ui]
+width = 960
+height = 560
+icon_size = 28
+
+[bluetooth]
+preferred = ""
+internal = ""

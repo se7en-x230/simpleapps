@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+"""Password entry for sudo; stdout goes only to sudo's askpass pipe."""
+import os as _path_os, sys as _path_sys
+from pathlib import Path as _Path
+_roots=[_Path(__file__).resolve().parents[3],_Path(_path_os.environ.get('XDG_DATA_HOME',_Path.home()/'.local/share')),_Path.home()/'.local/src']
+if _path_os.environ.get('SIMPLE_SOURCE_ROOT'):_roots.insert(0,_Path(_path_os.environ['SIMPLE_SOURCE_ROOT']))
+for _root in reversed(_roots):
+    for _name in ('simplepicker/python','simple-common'):
+        if (_root/_name).is_dir():_path_sys.path.insert(0,str(_root/_name))
+from pathlib import Path
+import sys
+
+from ui import show_menu
+
+css = _Path(_path_os.environ.get('XDG_CONFIG_HOME',_Path.home()/'.config'))/'simplepicker/services/style.css'
+answer = show_menu(lambda q: [], title='Services · administrator password',
+                   prompt='Administrator password', password=True, width=620, height=220,
+                   key_scope='services', theme=str(css) if css.is_file() else None)
+if not answer:
+    raise SystemExit(1)
+print(answer)

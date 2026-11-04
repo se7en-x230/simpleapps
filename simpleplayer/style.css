@@ -1,0 +1,53 @@
+/* Music-only refinements, using the shared desktop palette. */
+@import url("../style.css");
+
+.simplepicker .box-wrapper {
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid @simple_border;
+}
+.simplepicker .search-container {
+  background: @simple_surface;
+  border: 1px solid alpha(@simple_fg, 0.08);
+  border-radius: 12px;
+  margin-bottom: 4px;
+}
+.simplepicker .input {
+  background: transparent;
+  padding: 12px 8px;
+  font-size: 1rem;
+}
+.simplepicker .list .item-box {
+  padding: 6px 10px;
+  margin: 2px 0;
+  border-radius: 10px;
+  border-left: 2px solid transparent;
+}
+.simplepicker .list row:selected .item-box {
+  background: @simple_selection;
+  border-left-color: @simple_accent;
+}
+.simplepicker .list row:hover .item-box {
+  background: @simple_hover_overlay;
+}
+.simplepicker .list row:selected:hover .item-box {
+  background: @simple_selection;
+}
+.simplepicker .box-wrapper .item-icon {
+  background: alpha(@simple_accent, 0.08);
+  border-radius: 9px;
+  padding: 7px;
+  color: @simple_accent;
+}
+.simplepicker .item-text {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+.simplepicker .item-subtext {
+  font-size: 0.79rem;
+  margin-top: 2px;
+  opacity: 0.62;
+}
+.simplepicker .simplepicker-brand {
+  opacity: 0.45;
+}

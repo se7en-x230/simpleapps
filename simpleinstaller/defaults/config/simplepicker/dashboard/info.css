@@ -1,0 +1,52 @@
+@import url("../../simple/aliases.css");
+/* Shared system-dashboard detail panels and controls. */
+window.simple-sound{background:@simple_bg;color:@simple_fg;border:1px solid @simple_border;border-radius:18px;}
+.simple-sound .sound-body{padding:24px;}
+.simple-sound label{color:@simple_fg;font-size:1.0rem;}
+.simple-sound .sound-title{font-size:1.7143rem;font-weight:bold;}
+.simple-sound .sound-card{background:@simple_surface;border-radius:12px;padding:16px;}
+.simple-sound .sound-icon{color:@simple_accent;-gtk-icon-size:24px;}
+.simple-sound button,.simple-sound dropdown>button{background:@simple_button;color:@simple_fg;border:0;border-radius:9px;box-shadow:none;padding:8px 12px;}
+.simple-sound button:hover{background:@simple_hover;}
+.simple-sound button:checked{background:@simple_selected;}
+.simple-sound button:disabled{opacity:.55;}
+.simple-sound button:focus-visible,.simple-sound scale:focus-visible{outline:2px solid @simple_accent;outline-offset:2px;}
+.simple-sound .sound-hint{font-size:0.8571rem;opacity:.7;}
+.simple-sound .sound-error{color:@simple_error;font-size:0.8571rem;}
+.simple-sound scale{padding:10px 0;min-width:160px;}
+.simple-sound scale trough{min-height:7px;background:@simple_border;border-radius:5px;}
+.simple-sound scale highlight{background:@simple_accent;border-radius:5px;}
+.simple-sound scale slider{background:@simple_accent;border:0;box-shadow:none;border-radius:50%;min-width:15px;min-height:15px;margin:-4px;}
+.simple-sound popover contents{background:@simple_bg;color:@simple_fg;border:1px solid @simple_border;border-radius:12px;}
+.simple-sound popover row:selected{background:@simple_selected;}
+.simple-sound progressbar trough{background:@simple_border;min-height:9px;border-radius:5px;}
+.simple-sound progressbar progress{background:@simple_accent;min-height:9px;border-radius:5px;}
+/* Use one accent throughout native GTK states, including nested slider nodes. */
+@define-color accent_color @simple_accent;
+@define-color accent_bg_color @simple_accent;
+@define-color accent_fg_color @simple_fg;
+.simple-sound button,.simple-sound scale,.simple-sound dropdown,.simple-sound scale trough,.simple-sound scale highlight{outline:none;box-shadow:none;border:0;}
+.simple-sound button:focus-visible,.simple-sound scale:focus-visible,.simple-sound dropdown:focus-visible{outline:2px solid @simple_accent;outline-offset:2px;}
+.simple-sound button:checked:hover{background:@simple_selected;}
+.simple-sound scale:hover slider{background:@simple_accent_hover;}
+
+.simple-sound progressbar trough,.simple-sound progressbar progress{border:0;box-shadow:none;outline:none;}
+.simple-sound scale trough,.simple-sound scale highlight{margin:0;min-width:0;box-shadow:none;border:0;}
+.simple-sound scale highlight{min-height:7px;}
+.simple-sound button:checked{background:@simple_selected;color:@simple_fg;}
+
+.simple-sound .info-key { color: @simple_fg; font-size:1.0rem; }
+.simple-sound .info-value { font-size:1.0rem; }
+.simple-sound .sound-card image { color: @simple_accent; }
+
+/* Information cards use the same neutral surfaces and red focus as controls. */
+.simple-sound .sound-card.info-selected { outline: 2px solid @simple_accent; outline-offset: -2px; }
+.simple-sound .sound-card:focus { box-shadow: none; }
+.simple-sound label selection { background: @simple_selected; color: @simple_fg; }
+
+/* Compact, content-sized IP rows: retain the shared colors and typography. */
+.simple-sound.info-fit .sound-card { padding: 10px 14px; }
+.simple-sound.info-fit .info-key { min-width: 130px; }
+
+/* Match the stronger red used by selection-menu symbolic icons. */
+.simple-sound image { color: @simple_accent; }

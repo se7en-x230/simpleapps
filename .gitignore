@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.o
+*-native
+*-test
+.venv/
+/releases/
+/simpleinstaller/wallpaper-packs/

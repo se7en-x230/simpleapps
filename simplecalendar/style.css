@@ -1,0 +1,15 @@
+/* Layout only; colors inherit the shared theme. */
+window.simple-calendar-app .card { padding:6px 9px; border-radius:9px; }
+window.simple-calendar-app button { padding:5px 9px; min-height:24px; }
+window.simple-calendar-app calendar { padding:8px; }
+window.simple-calendar-app .card button { padding:2px 8px; min-height:20px; }
+
+window.simple-calendar-app label.empty-title { color:@simple_calendar_moon; font-weight:bold; }
+
+window.simple-calendar-app .monk-card {
+ background:@simple_surface; border:1px solid @simple_border; border-radius:12px;
+}
+window.simple-calendar-app .breath-card {
+ background:@simple_button; border:1px solid @simple_border; border-radius:9px;
+ padding:5px 9px; min-height:24px;
+}

@@ -1,0 +1,7 @@
+*.o
+simplepicker-native
+tests/driver
+tests/asan-driver
+tests/desktop-check
+__pycache__/
+core

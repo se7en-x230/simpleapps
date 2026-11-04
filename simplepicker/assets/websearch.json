@@ -1,0 +1,57 @@
+[
+  {
+    "name": "Google",
+    "url": "https://www.google.com/search?q=%TERM%",
+    "prefix": "gs"
+  },
+  {
+    "name": "Google images",
+    "url": "https://www.google.com/images?q=%TERM%",
+    "prefix": "gi:"
+  },
+  {
+    "name": "Google maps",
+    "url": "https://www.google.com/maps?q=%TERM%",
+    "prefix": "gm:"
+  },
+  {
+    "name": "DuckDuckGo",
+    "url": "https://duckduckgo.com/?q=%TERM%",
+    "prefix": "dd"
+  },
+  {
+    "name": "Brave search",
+    "url": "https://search.brave.com/search?q=%TERM%",
+    "prefix": "brave:"
+  },
+  {
+    "name": "Ecosia",
+    "url": "https://www.ecosia.org/search?q=%TERM%",
+    "prefix": "es"
+  },
+  {
+    "name": "Yandex",
+    "url": "https://yandex.com/search/?text=%TERM%",
+    "prefix": "ya"
+  },
+  {
+    "name": "Bandcamp",
+    "url": "https://bandcamp.com/search?q=%TERM%",
+    "prefix": "bc:"
+  },
+  {
+    "name": "ARCH Wiki",
+    "url": "https://wiki.archlinux.org/index.php?search=%TERM%",
+    "prefix": "arch:"
+  },
+  {
+    "name": "ARCH User Repository",
+    "url": "https://aur.archlinux.org/packages?K=%TERM%",
+    "prefix": "aur:"
+  },
+  {
+    "name": "Github search",
+    "url": "https://github.com/search?q=%TERM%",
+    "prefix": "gh:"
+  }
+]

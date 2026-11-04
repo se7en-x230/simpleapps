@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=SimpleContacts
+Comment=Google Contacts with a local address book
+Exec=simplecontacts
+Icon=address-book-new
+Terminal=false
+Categories=Office;ContactManagement;
+Keywords=contacts;google;address;phone;

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Simplewallpaper
+Comment=Static and daylight wallpaper
+Exec=simplewallpaper --menu
+Icon=preferences-desktop-wallpaper
+Categories=Settings;DesktopSettings;
+Terminal=false

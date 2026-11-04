@@ -1,0 +1,21 @@
+# Optional overrides; missing settings use bundled defaults.
+[desktop]
+backend = "auto"
+hyprland_dispatch = "legacy"
+[ui]
+layer_shell = "auto"
+[commands]
+copy = ["wl-copy"]
+open_url = ["xdg-open", "{url}"]
+# Custom window hooks are argument arrays in [windows].
+# Power example:
+# [power.lock]
+# label = "Lock"
+# key = "e"
+# icon = "system-lock-screen-symbolic"
+# command = ["swaylock", "-f"]
+
+[screensaver]
+enabled = true
+# Idle time in seconds; 160 = 2 minutes 40 seconds.
+idle_seconds = 160

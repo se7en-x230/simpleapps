@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""Simplepicker services: running state, controls, logs and web interfaces."""
+import os as _path_os, sys as _path_sys
+from pathlib import Path as _Path
+_roots=[_Path(__file__).resolve().parents[3],_Path(_path_os.environ.get('XDG_DATA_HOME',_Path.home()/'.local/share')),_Path.home()/'.local/src']
+if _path_os.environ.get('SIMPLE_SOURCE_ROOT'):_roots.insert(0,_Path(_path_os.environ['SIMPLE_SOURCE_ROOT']))
+for _root in reversed(_roots):
+    for _name in ('simplepicker/python','simple-common'):
+        if (_root/_name).is_dir():_path_sys.path.insert(0,str(_root/_name))
+import argparse
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+import service_core as core
+
+from simplepicker_api import Menu, BACK, notify
+
+
+def menu(title='Services'):
+    css = core.MODULE / 'style.css'
+    return Menu(title, width=820, icon='preferences-system-symbolic', key_scope='services',
+                theme=str(css) if css.is_file() else None)
+
+
+def choose(m, labels, descriptions=None, icons=None):
+    labels = dict(labels, back='Back')
+    result = m.choose(labels, descriptions=descriptions, icons=icons, height=min(850, 190 + 58 * len(labels)))
+    return None if result in (None, BACK, 'back') else result
+
+
+def once_report(title, operation):
+    saved = []
+    def once():
+        if not saved:
+            try:
+                saved.append(operation())
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+                saved.append('Request failed\n' + str(error))
+        return saved[0]
+    menu(title).details(once, sections=True)
+
+
+def service(entry, kind, config):
+    m = menu(entry['name'])
+    while True:
+        status = core.inventory([entry], kind)[entry['id']]
+        labels = {}
+        desc = {}
+        if not status.accessible and status.state == 'Authentication required':
+            labels['authenticate'] = 'Read system service status'
+            desc['authenticate'] = 'Administrator password required'
+        elif status.installed:
+            labels['status'] = 'Status · ' + status.state
+            desc['status'] = entry['scope'].capitalize() + ' service · ' + status.unit
+            if status.accessible:
+                if status.state in ('Running', 'Reloading'):
+                    labels.update(restart='Restart', stop='Stop')
+                elif status.state in ('Stopped', 'Failed', 'Skipped'):
+                    labels['start'] = 'Start'
+                labels['logs'] = 'Recent logs'
+        else:
+            labels['status'] = 'Not installed on this machine'
+        if entry.get('web'):
+            labels['web'] = 'Open web interface'
+        labels['refresh'] = 'Refresh status'
+        action = choose(m, labels, desc)
+        if action is None:
+            return
+        if action == 'authenticate':
+            result = core.inventory([entry], kind, auth=True)[entry['id']]
+            if not result.accessible:
+                notify(entry['name'], 'Service status could not be read. Authentication may have been cancelled.', error=True)
+        elif action == 'status':
+            once_report(entry['name'] + ' · status', lambda: core.detail(kind, entry, status))
+        elif action == 'logs':
+            once_report(entry['name'] + ' · recent logs', lambda: core.logs(kind, entry, status, config.get('log_lines', 200)))
+        elif action == 'web':
+            from settings import command
+            url = core.web_url(entry)
+            subprocess.Popen(command('open_url', url=url), stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            return
+        elif action in ('start', 'stop', 'restart'):
+            if action != 'start':
+                confirm = choose(menu(action.capitalize() + ' ' + entry['name'] + '?'),
+                                 {'cancel': 'Cancel', 'confirm': action.capitalize()},
+                                 {'confirm': entry.get('impact', 'This service will be interrupted.')})
+                if confirm != 'confirm':
+                    continue
+            def perform():
+                # Resolve current status again before performing the selected action.
+                fresh = core.inventory([entry], kind)[entry['id']]
+                result = core.change(kind, entry, fresh, action)
+                current = core.inventory([entry], kind)[entry['id']]
+                return f"{entry['name']} · {current.state}\n{result}"
+            once_report(action.capitalize() + ' ' + entry['name'], perform)
+
+
+def gui(config, kind, group=None):
+    entries = config['services']
+    m = menu('Services · ' + kind if group is None else group)
+    while True:
+        relevant = [e for e in entries if e.get('group') == group]
+        states = core.inventory(relevant, kind)
+        labels, desc, icons = {}, {}, {}
+        for entry in relevant:
+            status = states[entry['id']]
+            if not status.installed:
+                continue
+            key = 'service:' + entry['id']
+            labels[key] = entry['name']
+            desc[key] = status.state + ' · ' + entry['scope'].capitalize() + ' service'
+            icons[key] = ('dialog-error-symbolic' if status.state == 'Failed'
+                          else 'system-lock-screen-symbolic' if not status.accessible
+                          else entry.get('icon', 'preferences-system-symbolic'))
+        if group is None:
+            for category in dict.fromkeys(e['group'] for e in entries if e.get('group')):
+                labels['group:' + category] = category
+                desc['group:' + category] = 'Keyboard, USB prompts and other desktop background tasks'
+        labels['refresh'] = 'Refresh service status'
+        action = choose(m, labels, desc, icons)
+        if action is None:
+            return
+        try:
+            if action.startswith('service:'):
+                service(next(e for e in entries if e['id'] == action.removeprefix('service:')), kind, config)
+            elif action.startswith('group:'):
+                gui(config, kind, action.removeprefix('group:'))
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            menu('Services').details('Request failed\n' + str(error))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--report', action='store_true', help='Read configured service status without authentication prompts')
+    parser.add_argument('--check-config', action='store_true')
+    args = parser.parse_args()
+    try:
+        config = core.load_config()
+        if args.check_config:
+            print(f"Configuration valid: {len(config['services'])} services, dinit and systemd mappings.")
+            return 0
+        kind = core.manager()
+        if args.report:
+            print('Service manager: ' + kind)
+            states = core.inventory(config['services'], kind)
+            for entry in config['services']:
+                status = states[entry['id']]
+                print(f"{entry['name']}: {status.state} ({entry['scope']} · {status.unit})")
+        else:
+            gui(config, kind)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        if args.report or args.check_config:
+            print(str(error), file=sys.stderr)
+        else:
+            menu('Services').details('Services unavailable\n' + str(error))
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

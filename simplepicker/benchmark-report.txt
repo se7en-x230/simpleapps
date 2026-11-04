@@ -1,0 +1,10 @@
+Native conversion startup comparison
+Six measured warm runs per mode; one discarded warmup, alternating order.
+Process start to first GTK after-paint; not physical presentation latency.
+No selections, history writes or external actions. Installed Python files unchanged.
+The C implementation differs internally; these are implementation comparisons, not isolated language overhead.
+
+menu-100: Python 345.8 ms; C 193.5 ms
+apps: Python 392.3 ms; C 223.3 ms
+runner: Python 511.8 ms; C 282.7 ms
+symbols: Python 541.9 ms; C 281.9 ms

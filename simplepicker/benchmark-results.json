@@ -1,0 +1,338 @@
+[
+  {
+    "mode": "menu-100",
+    "implementation": "Python",
+    "warmup": true,
+    "startup_ms": 537.006
+  },
+  {
+    "mode": "menu-100",
+    "implementation": "C",
+    "warmup": true,
+    "startup_ms": 178.976
+  },
+  {
+    "mode": "menu-100",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 197.409
+  },
+  {
+    "mode": "menu-100",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 363.405
+  },
+  {
+    "mode": "menu-100",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 331.798
+  },
+  {
+    "mode": "menu-100",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 189.074
+  },
+  {
+    "mode": "menu-100",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 192.386
+  },
+  {
+    "mode": "menu-100",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 342.335
+  },
+  {
+    "mode": "menu-100",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 335.612
+  },
+  {
+    "mode": "menu-100",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 195.284
+  },
+  {
+    "mode": "menu-100",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 194.702
+  },
+  {
+    "mode": "menu-100",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 349.275
+  },
+  {
+    "mode": "menu-100",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 370.043
+  },
+  {
+    "mode": "menu-100",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 186.253
+  },
+  {
+    "mode": "apps",
+    "implementation": "Python",
+    "warmup": true,
+    "startup_ms": 1130.48
+  },
+  {
+    "mode": "apps",
+    "implementation": "C",
+    "warmup": true,
+    "startup_ms": 204.63
+  },
+  {
+    "mode": "apps",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 229.123
+  },
+  {
+    "mode": "apps",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 432.095
+  },
+  {
+    "mode": "apps",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 630.861
+  },
+  {
+    "mode": "apps",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 217.451
+  },
+  {
+    "mode": "apps",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 234.529
+  },
+  {
+    "mode": "apps",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 389.949
+  },
+  {
+    "mode": "apps",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 368.403
+  },
+  {
+    "mode": "apps",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 216.978
+  },
+  {
+    "mode": "apps",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 215.323
+  },
+  {
+    "mode": "apps",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 371.784
+  },
+  {
+    "mode": "apps",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 394.601
+  },
+  {
+    "mode": "apps",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 229.276
+  },
+  {
+    "mode": "runner",
+    "implementation": "Python",
+    "warmup": true,
+    "startup_ms": 666.949
+  },
+  {
+    "mode": "runner",
+    "implementation": "C",
+    "warmup": true,
+    "startup_ms": 277.938
+  },
+  {
+    "mode": "runner",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 279.51
+  },
+  {
+    "mode": "runner",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 522.956
+  },
+  {
+    "mode": "runner",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 498.568
+  },
+  {
+    "mode": "runner",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 284.22
+  },
+  {
+    "mode": "runner",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 281.382
+  },
+  {
+    "mode": "runner",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 517.732
+  },
+  {
+    "mode": "runner",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 510.338
+  },
+  {
+    "mode": "runner",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 276.865
+  },
+  {
+    "mode": "runner",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 284.042
+  },
+  {
+    "mode": "runner",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 513.196
+  },
+  {
+    "mode": "runner",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 475.923
+  },
+  {
+    "mode": "runner",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 316.64
+  },
+  {
+    "mode": "symbols",
+    "implementation": "Python",
+    "warmup": true,
+    "startup_ms": 2214.806
+  },
+  {
+    "mode": "symbols",
+    "implementation": "C",
+    "warmup": true,
+    "startup_ms": 2036.391
+  },
+  {
+    "mode": "symbols",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 285.627
+  },
+  {
+    "mode": "symbols",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 479.156
+  },
+  {
+    "mode": "symbols",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 488.415
+  },
+  {
+    "mode": "symbols",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 272.197
+  },
+  {
+    "mode": "symbols",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 470.141
+  },
+  {
+    "mode": "symbols",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 2394.789
+  },
+  {
+    "mode": "symbols",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 493.986
+  },
+  {
+    "mode": "symbols",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 278.174
+  },
+  {
+    "mode": "symbols",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 276.357
+  },
+  {
+    "mode": "symbols",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 2527.217
+  },
+  {
+    "mode": "symbols",
+    "implementation": "Python",
+    "warmup": false,
+    "startup_ms": 589.811
+  },
+  {
+    "mode": "symbols",
+    "implementation": "C",
+    "warmup": false,
+    "startup_ms": 286.316
+  }
+]

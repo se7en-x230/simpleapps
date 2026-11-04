@@ -1,0 +1,16 @@
+@import url("../simple/aliases.css");
+window.simplepanel {background:transparent;color:@simple_fg;}
+.panel {padding:0 10px;font-size:1.0rem;}
+.panel label {color:@simple_fg;}
+.muted {opacity:.65;}
+.panel .tag {min-height:0;min-width:0;padding:2px 7px;border:0;border-radius:0;background:transparent;box-shadow:none;color:@simple_fg;}
+.panel .tag.active {font-weight:700;color:@simple_panel_accent;background:alpha(@simple_panel_accent,.12);}
+.panel .tag.urgent {color:@simple_error;}
+.panel .tag.hovered {background:alpha(@simple_panel_accent,.16);box-shadow:none;}
+window.simplepanel-osd {background:transparent;box-shadow:none;color:@simple_fg;}
+.volume-osd-card {background:alpha(@simple_bg,.80);border-radius:14px;padding:14px 8px;}
+.volume-osd-card label {font-size:1.0rem;margin:0;padding:0;}
+.volume-osd-card progressbar {padding:0;margin:0;}
+.volume-osd-card trough {margin:0;padding:0;min-width:8px;border:0;border-radius:6px;background:@simple_hover_overlay;}
+.volume-osd-card progress {margin:0;padding:0;min-width:8px;min-height:1px;border:0;border-radius:6px;background:@simple_accent;}
+.volume-osd-card.muted progress {background:@simple_muted;}

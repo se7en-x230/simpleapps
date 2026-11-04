@@ -1,0 +1,18 @@
+# Optional service controls; no services are enabled by this file.
+log_lines = 100
+[[services]]
+id = "network"
+name = "NetworkManager"
+scope = "system"
+dinit = "NetworkManager"
+systemd = ["NetworkManager.service"]
+icon = "network-workgroup-symbolic"
+impact = "Network connections may disconnect while stopped."
+[[services]]
+id = "printing"
+name = "Printing"
+scope = "system"
+dinit = "cupsd"
+systemd = ["cups.service"]
+icon = "printer-symbolic"
+impact = "Printing is unavailable while stopped."

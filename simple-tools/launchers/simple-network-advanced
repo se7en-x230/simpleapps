@@ -1,0 +1,6 @@
+#!/bin/sh
+case "${1:-wifi}" in
+ wifi) exec simple-open terminal nmtui ;;
+ bt|bluetooth) exec simple-network bt ;;
+ *) echo 'Usage: simple-network-advanced wifi|bt' >&2; exit 2 ;;
+esac

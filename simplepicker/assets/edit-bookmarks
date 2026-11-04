@@ -1,0 +1,6 @@
+#!/bin/sh
+root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ -x "$root/../simplepicker-native" ]; then
+    exec "$root/../simplepicker-native" --bookmark-editor
+fi
+exec "${SIMPLEPICKER_NATIVE:-simplepicker-native}" --bookmark-editor

@@ -1,0 +1,278 @@
+#!/usr/bin/env python3
+"""Simplepicker display controls, named layouts and timed recovery."""
+import os as _path_os, sys as _path_sys
+from pathlib import Path as _Path
+_roots=[_Path(__file__).resolve().parents[3],_Path(_path_os.environ.get('XDG_DATA_HOME',_Path.home()/'.local/share')),_Path.home()/'.local/src']
+if _path_os.environ.get('SIMPLE_SOURCE_ROOT'):_roots.insert(0,_Path(_path_os.environ['SIMPLE_SOURCE_ROOT']))
+for _root in reversed(_roots):
+    for _name in ('simplepicker/python','simple-common'):
+        if (_root/_name).is_dir():_path_sys.path.insert(0,str(_root/_name))
+import argparse
+import copy
+import json
+import math
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import tomllib
+
+import display_core as core
+
+SCRIPT = Path(__file__).resolve()
+MODULE = _Path(_path_os.environ.get('XDG_CONFIG_HOME',_Path.home()/'.config'))/'simplepicker/displays'
+PROFILES = MODULE / 'profiles.json'
+from simplepicker_api import Menu, BACK, notify
+
+
+def settings():
+    with (MODULE / 'config.toml').open('rb') as stream:
+        cfg = tomllib.load(stream)
+    seconds = cfg.get('confirm_seconds', 20)
+    scales = cfg.get('scales', [1, 1.25, 1.5, 1.75, 2])
+    if type(seconds) is not int or not 10 <= seconds <= 60:
+        raise ValueError('confirm_seconds must be an integer between 10 and 60.')
+    if not isinstance(scales, list) or not scales or any(type(s) not in (int, float) or not math.isfinite(s) or not .5 <= s <= 4 for s in scales):
+        raise ValueError('scales must contain numbers between 0.5 and 4.')
+    return seconds, sorted(set(scales))
+
+
+def menu(title='Displays'):
+    css = MODULE / 'style.css'
+    return Menu(title, width=800, icon='video-display-symbolic', key_scope='displays',
+                theme=str(css) if css.is_file() else None)
+
+
+def choose(title, labels, descriptions=None):
+    labels = dict(labels)
+    labels['back'] = 'Back'
+    result = menu(title).choose(labels, descriptions=descriptions, height=min(820, 190 + len(labels) * 58))
+    return None if result in (None, BACK, 'back') else result
+
+
+def summary(row):
+    if not row['enabled']:
+        return 'Disabled'
+    m, p = row['mode'], row['position']
+    return (f"{m['width']} × {m['height']} · {m['refresh']:.2f} Hz · "
+            f"{row['scale']:g}× scale · {p['x']},{p['y']}")
+
+
+def profiles():
+    if not PROFILES.exists():
+        return {}
+    data = json.loads(PROFILES.read_text())
+    if not isinstance(data, dict) or not all(isinstance(k, str) and isinstance(v, list) for k, v in data.items()):
+        raise ValueError('Invalid profiles.json. Expected named display layouts.')
+    return data
+
+
+def apply(before, after, label):
+    if before == after:
+        notify('Displays', 'This layout is already active.')
+        return
+    # Independent process owns recovery, even if the menu itself is closed/killed.
+    process = subprocess.Popen([sys.executable, str(SCRIPT), '--trial'], stdin=subprocess.PIPE,
+                               stdout=subprocess.PIPE, text=True, start_new_session=True)
+    output, _ = process.communicate(json.dumps(dict(before=before, after=after, label=label)))
+    if process.returncode:
+        raise RuntimeError(output.strip() or 'Display change failed. See the display notification.')
+    notify('Displays', output.strip())
+
+
+def confirmation(seconds, label):
+    m = menu('Keep this display layout?')
+    m.selected = 'revert'
+    result = m.choose({'revert': 'Revert', 'keep': 'Keep'},
+                      prompt=f'Restores automatically after {seconds} seconds',
+                      descriptions={'revert': 'Return to the previous layout', 'keep': label + ' — use for this session'},
+                      height=340)
+    print('keep' if result == 'keep' else 'revert', flush=True)
+
+
+def worker():
+    payload = json.load(sys.stdin)
+    seconds, _ = settings()
+    with core.transaction_lock():
+        # Terminating the supervisor normally unwinds the transaction and restores.
+        def interrupted(_signum, _frame):
+            raise RuntimeError('Display change interrupted.')
+        signal.signal(signal.SIGTERM, interrupted)
+        signal.signal(signal.SIGINT, interrupted)
+        argv = [sys.executable, str(SCRIPT), '--confirm', str(seconds), '--label', payload['label']]
+        result = core.trial(payload['before'], payload['after'], lambda: core.bounded_confirmation(argv, seconds))
+        print(result, flush=True)
+
+
+def screen(name):
+    while True:
+        rows = core.query()
+        plan = core.snapshot(rows)
+        row = next((r for r in plan if r['name'] == name), None)
+        if row is None:
+            return
+        raw = next(r for r in rows if r['name'] == name)
+        title = f"{name} · {row['model']}"
+        actions = {'mode': 'Resolution and refresh rate', 'scale': 'Scaling', 'rotation': 'Rotation', 'only': 'Use only this screen'} if row['enabled'] else {'enable': 'Enable this screen'}
+        if row['enabled'] and sum(r['enabled'] for r in plan) > 1:
+            actions['disable'] = 'Disable this screen'
+        action = choose(title, actions, {'mode': summary(row), 'scale': 'Larger scale makes text and controls larger'})
+        if not action:
+            return
+        after = copy.deepcopy(plan)
+        if action == 'mode':
+            modes = []
+            for mode in raw['modes']:
+                if not any(core.mode_matches(mode, m) for m in modes):
+                    modes.append(mode)
+            labels = {str(i): f"{m['width']} × {m['height']} · {m['refresh']:.2f} Hz" for i, m in enumerate(modes)}
+            desc = {str(i): ' · '.join(s for s, yes in [('Current', core.mode_matches(row['mode'], m)), ('Preferred', m.get('preferred'))] if yes) for i, m in enumerate(modes)}
+            pick = choose('Resolution and refresh rate', labels, desc)
+            if pick is None:
+                continue
+            mode = {k: modes[int(pick)][k] for k in ('width', 'height', 'refresh')}
+            after = core.resize(plan, name, mode=mode)
+        elif action == 'scale':
+            _, scales = settings()
+            labels = {str(s): f'{s:g}×' + (' · current' if s == row['scale'] else '') for s in scales}
+            pick = choose('Scaling', labels)
+            if pick is None:
+                continue
+            after = core.resize(plan, name, scale=float(pick))
+        elif action == 'rotation':
+            pick = choose('Rotation', {'normal': 'Normal', '90': '90°', '180': '180°', '270': '270°'})
+            if pick is None:
+                continue
+            after = core.resize(plan, name, transform=pick)
+        elif action == 'only':
+            after = core.arrange(plan, [name])
+        elif action == 'enable':
+            after = core.arrange(plan, core.order([r for r in plan if r['enabled']]) + [name])
+        elif action == 'disable':
+            after = core.arrange(plan, core.order([r for r in plan if r['enabled'] and r['name'] != name]))
+        apply(plan, after, title)
+
+
+def arrangement():
+    plan = core.snapshot(core.query())
+    if len(plan) < 2:
+        menu().details('One display connected\n\nConnect another screen to arrange displays.')
+        return
+    names = core.order(plan)
+    labels = {'row': 'Side by side', 'row-reverse': 'Side by side · reverse order',
+              'column': 'Stack vertically', 'column-reverse': 'Stack vertically · reverse order'}
+    desc = {'row': ' → '.join(names), 'row-reverse': ' → '.join(reversed(names)),
+            'column': ' ↓ '.join(names), 'column-reverse': ' ↓ '.join(reversed(names))}
+    laptop = [r['name'] for r in plan if core.internal(r)]
+    external = [r['name'] for r in plan if not core.internal(r)]
+    if laptop and external:
+        labels.update(laptop='Laptop screen only', external='External displays only')
+    pick = choose('Arrange displays', labels, desc)
+    if pick is None:
+        return
+    selected = laptop if pick == 'laptop' else external if pick == 'external' else list(reversed(names)) if pick.endswith('reverse') else names
+    apply(plan, core.arrange(plan, selected, pick.startswith('column')), labels[pick])
+
+
+def save():
+    from ui import show_menu
+    name = show_menu(lambda q: [], title='Save display layout', prompt='Layout name', input_only=True,
+                     width=680, height=220, key_scope='displays', theme=menu().theme)
+    if not name or not name.strip():
+        return
+    name = name.strip()
+    if len(name) > 80 or any(ord(c) < 32 for c in name):
+        raise ValueError('Use a layout name of up to 80 characters without control characters.')
+    saved = profiles()
+    if name in saved and choose('Replace saved layout?', {'cancel': 'Cancel', 'replace': 'Replace ' + name}) != 'replace':
+        return
+    saved[name] = core.snapshot(core.query())
+    core.atomic_json(PROFILES, saved)
+    notify('Displays', 'Saved layout: ' + name)
+
+
+def saved_layouts():
+    while True:
+        saved = profiles()
+        if not saved:
+            menu('Saved layouts').details('No saved layouts\n\nChoose Save current layout to create a preset.')
+            return
+        names = list(saved)
+        pick = choose('Saved layouts', {str(i): n for i, n in enumerate(names)},
+                      {str(i): ', '.join(r['name'] for r in saved[n] if r['enabled']) for i, n in enumerate(names)})
+        if pick is None:
+            return
+        name = names[int(pick)]
+        action = choose(name, {'apply': 'Apply layout', 'delete': 'Delete saved layout'})
+        if action == 'apply':
+            apply(core.snapshot(core.query()), saved[name], name)
+        elif action == 'delete' and choose('Delete ' + name + '?', {'cancel': 'Cancel', 'delete': 'Delete saved layout'}) == 'delete':
+            del saved[name]
+            core.atomic_json(PROFILES, saved)
+
+
+def gui():
+    settings()
+    main = menu()
+    while True:
+        try:
+            plan = core.snapshot(core.query())
+            items = {'screen:' + r['name']: r['name'] + (' · ' + r['model'] if r['model'] else '') for r in plan}
+            descriptions = {'screen:' + r['name']: summary(r) for r in plan}
+            if len(plan) > 1:
+                items['arrange'] = 'Arrange displays'
+                descriptions['arrange'] = 'Side by side, stacked, or selected screens only'
+            items.update(saved='Saved layouts', save='Save current layout', refresh='Refresh connected screens', back='Back')
+            descriptions.update(saved='Apply a named layout for these screens', save='Remember this arrangement for later')
+            pick = main.choose(items, descriptions=descriptions, height=min(820, 190 + len(items) * 58))
+            if pick in (None, BACK, 'back'):
+                return
+            if pick.startswith('screen:'):
+                screen(pick.removeprefix('screen:'))
+            elif pick == 'arrange':
+                arrangement()
+            elif pick == 'save':
+                save()
+            elif pick == 'saved':
+                saved_layouts()
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.SubprocessError) as error:
+            menu('Displays').details('Display request failed\n\n' + str(error))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--report', action='store_true')
+    parser.add_argument('--check', action='store_true')
+    parser.add_argument('--trial', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--confirm', type=int, help=argparse.SUPPRESS)
+    parser.add_argument('--label', default='Display layout', help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    try:
+        if args.trial:
+            worker()
+        elif args.confirm:
+            confirmation(args.confirm, args.label)
+        elif args.report or args.check:
+            rows = core.query()
+            plan = core.snapshot(rows)
+            if args.check:
+                settings()
+                core.validate(plan, rows)
+                core.run(core.arguments(plan, dryrun=True))
+                print('Current layout accepted by compositor (dry run; nothing changed).')
+            else:
+                for row in plan:
+                    print(row['name'] + ' · ' + row['model'] + '\n  ' + summary(row))
+        else:
+            gui()
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.SubprocessError) as error:
+        print(str(error), flush=True)
+        if args.trial:
+            notify('Display change failed', str(error), error=True)
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

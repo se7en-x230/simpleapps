@@ -1,0 +1,15 @@
+#!/bin/sh
+# Locate code independently of the user's home or window manager.
+bindir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+source=${SIMPLECONTACTS_SOURCE:-}
+if [ -z "$source" ]; then
+    for candidate in "$bindir/../share/simplecontacts" "${XDG_DATA_HOME:-$HOME/.local/share}/simplecontacts" "$bindir/../src/simplecontacts"; do
+        if [ -f "$candidate/main.py" ]; then source=$candidate; break; fi
+    done
+fi
+[ -n "$source" ] || { echo 'simplecontact: application resources missing' >&2; exit 1; }
+export SIMPLECONTACTS_SOURCE="$source"
+case "${1-}" in
+  --sync|--watch|--connect|--export|--client-json|--help|-h) exec python3 "$source/main.py" "$@" ;;
+  *) exec simplecontacts-native "$@" ;;
+esac

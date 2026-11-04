@@ -1,0 +1,7 @@
+#!/bin/sh
+bindir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+for root in "${SIMPLE_TOOLS_SOURCE:-}" "$bindir/../share/simple-tools" "${XDG_DATA_HOME:-$HOME/.local/share}/simple-tools" "$bindir/../src/simple-tools"; do
+    if [ -n "$root" ] && [ -f "$root/services/scripts/simple-services" ]; then exec python3 "$root/services/scripts/simple-services"  "$@"; fi
+done
+echo 'simple-services: application resources missing' >&2
+exit 1

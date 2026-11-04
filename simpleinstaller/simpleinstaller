@@ -1,0 +1,521 @@
+#!/usr/bin/env python3
+"""Install selected Simple apps using their existing source build recipes."""
+import argparse
+import contextlib
+import curses
+from datetime import datetime
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import sys
+import tarfile
+import tomllib
+import recipes
+import wallpaper_pack
+import uninstall
+import tempfile
+
+HERE=Path(__file__).resolve().parent
+CATALOG=json.loads((HERE/'components.json').read_text())['components']
+IGNORE=recipes.source_ignore
+
+def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest()
+def run(argv,**kwargs):return subprocess.run([str(x) for x in argv],check=True,**kwargs)
+def directories(home=None):
+    home=Path.home() if home is None else Path(home)
+    result={'home':home,'bin':home/'.local/bin','src':home/'.local/src'}
+    for key,var,fallback in [('config','XDG_CONFIG_HOME','.config'),('data','XDG_DATA_HOME','.local/share'),('state','XDG_STATE_HOME','.local/state')]:
+        result[key]=Path(os.environ.get(var,str(home/fallback)))
+    if any(not p.is_absolute() for p in result.values()):raise ValueError('HOME and XDG directories must be absolute paths')
+    return result
+
+def sources(override=None):
+    if override:return Path(override).expanduser().resolve()
+    # Installed tool and Newinit share the maintained sources. Bundles carry a snapshot.
+    if (HERE/'sources').is_dir():return HERE/'sources'
+    return Path.home()/'.local/src'
+
+def validate_sources(root,names):
+    for name in recipes.roots_for(names):
+        required=CATALOG[name]['source_files'] if name in CATALOG else (['Makefile','main.c'] if name=='simplepicker' else ['simple-theme.h','organizer-helper.py','theme_loader.py'])
+        for rel in required:
+            if not (root/name/rel).is_file():raise ValueError(f'Missing source: {root/name/rel}')
+    for rel in ('default-idle.png','default-avatar.png'):
+        if not (root/'simple-common/assets/images'/rel).is_file():raise ValueError('Missing shared fallback image: '+rel)
+
+
+def packages(names,options):
+    result=set()
+    for name in names:
+        spec=CATALOG[name];result.update(spec['build']);result.update(spec['runtime'])
+        for key,feature in spec['optional'].items():
+            if key in options:result.update(feature['packages'])
+    return sorted(result)
+
+def dependency_errors(names,options):
+    errors=[]
+    for name in names:
+        spec=CATALOG[name];commands=list(spec['commands'])
+        for key,feature in spec['optional'].items():
+            if key in options:commands+=feature['commands']
+        for cmd in commands:
+            if not shutil.which(cmd):errors.append(f'{name}: missing {cmd}')
+        imports=list(spec.get('imports',[]))
+        for key,feature in spec['optional'].items():
+            if key in options:imports+=feature.get('imports',[])
+        if name=='simplewallpaper' and 'daylight' in options:imports.append('astral')
+        python=sys.executable
+        if name=='simplecalendar':
+            candidate=directories()['data']/'simple-calendar-runtime/bin/python'
+            if candidate.is_file():python=str(candidate)
+        for module in imports:
+            if subprocess.run([python,'-c','import importlib; importlib.import_module('+repr(module)+')'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:errors.append(name+': missing Python module '+module)
+        if shutil.which('pkg-config'):
+            for module in spec['modules']:
+                if subprocess.run(['pkg-config','--exists',module]).returncode:errors.append(f'{name}: missing {module}')
+    return errors
+
+def platform_check():
+    values={}
+    for line in Path('/etc/os-release').read_text().splitlines():
+        if '=' in line:
+            k,v=line.split('=',1);values[k]=v.strip('"')
+    ids=(values.get('ID','')+' '+values.get('ID_LIKE','')).split()
+    if not set(ids)&{'arch','artix','manjaro','endeavouros','garuda','cachyos'} or not shutil.which('pacman'):
+        raise ValueError('Package installation currently supports Arch-based systems with pacman. Use --no-packages only after supplying the dependencies yourself.')
+
+def prepare_packages(names,options):
+    platform_check()
+    wanted=packages(names,options)
+    missing=[p for p in wanted if subprocess.run(['pacman','-Q',p],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode]
+    if missing:
+        print('\nPackage transaction (includes a full system upgrade to avoid a partial upgrade):',flush=True)
+        # Use only configured repositories; never enable repos or invoke an AUR helper automatically.
+        run(['sudo','pacman','-Syu','--needed',*wanted])
+    else:print('Required packages are already installed.')
+
+def stage_apps(root,names,options,stage,work,wallpapers=None):
+    return recipes.stage_apps(HERE,CATALOG,root,names,options,stage,work,wallpapers)
+
+
+def destination(rel,dirs):
+    parts=rel.parts
+    if parts[:2]==('.local','share'):return dirs['data']/Path(*parts[2:])
+    if parts[:2]==('.local','bin'):return dirs['bin']/Path(*parts[2:])
+    if parts[:2]==('.local','lib'):return dirs['home']/'.local/lib'/Path(*parts[2:])
+    raise ValueError(f'Unexpected staged destination: {rel}')
+
+def payload(stage,dirs,names,options,music,choices=None):
+    files={destination(p.relative_to(stage),dirs):(p,False) for p in stage.rglob('*') if p.is_file()}
+    for name in ('theme.css','aliases.css','preferences.toml','images.ini'):
+        files[dirs['config']/'simple'/name]=(HERE/'defaults'/name,True)
+    config_defaults=HERE/'defaults/config'
+    groups=['simple']+[name for name in names if name in ('simplepanel','simplelock')]
+    if 'simple-tools' in names:groups.append('simplepicker')
+    for group in groups:
+        for src in (config_defaults/group).rglob('*'):
+            if src.is_file():files[dirs['config']/src.relative_to(config_defaults)]=(src,True)
+    for name in names:
+        for src in (stage/'.local/share'/name/'defaults').glob('*'):
+            if src.is_file():files[dirs['config']/name/src.name]=(src,True)
+    for name,key in [('simplepanel','panel_visualizer'),('simplelock','lock_visualizer')]:
+        if name not in names or key not in options:continue
+        extension='toml' if name=='simplelock' else 'ini'
+        dst=dirs['config']/name/('config.'+extension);src,_=files[dst]
+        changed=stage/(name+'-config.'+extension)
+        changed.write_text(src.read_text().replace('visualizer = false','visualizer = true').replace('cava=false','cava=true'))
+        files[dst]=(changed,True)
+    if choices:
+        prefs=stage/'application-preferences.toml'
+        prefs.write_text('# Shared Simple app choices. Empty arrays use desktop defaults.\n[applications]\n'+''.join(key+' = '+json.dumps(choices.get(key,[]),ensure_ascii=False)+'\n' for key in ('terminal','browser','file_manager','media_player','mail')))
+        files[dirs['config']/'simple/preferences.toml']=(prefs,True)
+    if 'simplepicker' in names or 'simple-tools' in names:
+        for source,target in [('picker-config.toml','config.toml'),('picker-style.css','style.css'),('picker-status-colors.css','status-colors.css')]:
+            files[dirs['config']/'simplepicker'/target]=(HERE/'defaults'/source,True)
+    if 'simpleplayer' in names:
+        config=stage/'player-config.toml'
+        legacy=dirs['config']/'simplepicker/music/config.toml'
+        if legacy.is_file():
+            # Preserve current user's library and preferences on first migration.
+            content=legacy.read_text()
+        else:
+            content='# Simpleplayer: mpv is required; Cava visualization is optional.\n'
+            content+='music_dir = '+json.dumps(music,ensure_ascii=False)+'\n'
+            content+='visualizer = '+str('visualizer' in options).lower()+'\n'
+        config.write_text(content)
+        files[dirs['config']/'simpleplayer/config.toml']=(config,True)
+    # Absolute desktop commands work without ~/.local/bin on the session PATH.
+    for dst,(path,_preserve) in list(files.items()):
+        if dst.parent!=dirs['data']/'applications' or dst.suffix!='.desktop':continue
+        lines=[]
+        for line in path.read_text().splitlines():
+            if line.startswith('Exec='):
+                command,*arguments=shlex.split(line[5:])
+                executable=str(dirs['bin']/command)
+                escaped=executable.replace('\\','\\\\').replace('"','\\"').replace('`','\\`').replace('$','\\$').replace('%','%%')
+                line='Exec="'+escaped+'"'+(' '+' '.join(arguments) if arguments else '')
+            lines.append(line)
+        path.write_text('\n'.join(lines)+'\n')
+    return files
+
+def safe_target(path):
+    # Never follow a configuration/source directory symlink into an unrelated tree.
+    for parent in [path.parent,*path.parent.parents]:
+        if parent.is_symlink():raise ValueError(f'Refusing symlinked destination directory: {parent}')
+    if path.is_symlink():raise ValueError(f'Refusing to replace symlink: {path}')
+    if path.exists() and not path.is_file():raise ValueError(f'Destination is not a file: {path}')
+
+def apply_files(files,state):
+    changes=[]
+    for dst,(src,preserve) in sorted(files.items()):
+        if preserve and (dst.exists() or dst.is_symlink()):continue
+        safe_target(dst)
+        if dst.exists() and digest(dst)==digest(src) and (dst.stat().st_mode&0o777)==(src.stat().st_mode&0o777):continue
+        changes.append((src,dst))
+    if not changes:print('All selected files are already current.');return None
+    transaction=state/('install-'+datetime.now().strftime('%Y%m%d-%H%M%S-%f'))
+    transaction.mkdir(parents=True,mode=0o700)
+    records=[]
+    for index,(src,dst) in enumerate(changes):
+        record={'path':str(dst),'sha256':digest(src),'backup':None}
+        if dst.exists():
+            backup=transaction/f'{index}.before';shutil.copy2(dst,backup);record['backup']=str(backup)
+        records.append(record)
+    receipt=transaction/'receipt.json'
+    receipt.write_text(json.dumps({'status':'prepared','files':records},indent=2)+'\n')
+    applied=[]
+    try:
+        for (src,dst),record in zip(changes,records):
+            dst.parent.mkdir(parents=True,exist_ok=True)
+            with tempfile.NamedTemporaryFile(dir=dst.parent,delete=False,prefix='.'+dst.name+'-') as f:temp=Path(f.name)
+            try:shutil.copy2(src,temp);os.replace(temp,dst)
+            finally:temp.unlink(missing_ok=True)
+            applied.append(record)
+    except BaseException:
+        for record in reversed(applied):
+            dst=Path(record['path'])
+            if record['backup']:shutil.copy2(record['backup'],dst)
+            else:dst.unlink(missing_ok=True)
+        receipt.write_text(json.dumps({'status':'rolled-back','files':records},indent=2)+'\n')
+        raise
+    receipt.write_text(json.dumps({'status':'installed','files':records},indent=2)+'\n')
+    print('File receipt and backups:',receipt)
+    return receipt
+
+def install(args,names,options):
+    with wallpaper_pack.prepare(HERE,names,options,getattr(args,'wallpaper_pack',None),getattr(args,'wallpaper_themes',None)) as wallpapers:
+        return install_prepared(args,names,options,wallpapers)
+
+def install_prepared(args,names,options,wallpapers):
+    if os.geteuid()==0:raise ValueError('Run Simpleinstaller as your normal user, not root. Only pacman uses sudo.')
+    root=sources(args.source_root);validate_sources(root,names);dirs=directories()
+    if not args.no_packages:prepare_packages(names,options)
+    errors=dependency_errors(names,options)
+    if errors:raise ValueError('\n'.join(errors))
+    state=dirs['state']/'simpleinstaller';state.mkdir(parents=True,exist_ok=True)
+    with (state/'install.lock').open('a') as lock:
+        try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:raise ValueError('Another Simpleinstaller is running')
+        with tempfile.TemporaryDirectory(prefix='simpleinstaller-') as td:
+            work=Path(td)/'build';work.mkdir();stage=Path(td)/'home';stage.mkdir()
+            owners=stage_apps(root,names,options,stage,work,wallpapers)
+            files=payload(stage,dirs,names,options,args.music_dir,getattr(args,"app_choices",None))
+            # Keep maintained app sources alongside the other Simple apps.
+            for name in recipes.roots_for(names):
+                for src in (work/name).rglob('*'):
+                    if not src.is_file() or '__pycache__' in src.parts or recipes.source_ignore(src.parent,[src.name]):continue
+                    dst=dirs['src']/name/src.relative_to(work/name)
+                    # Existing source trees are owned by their maintainer, not a downloaded bundle.
+                    if (dirs['src']/name).exists():continue
+                    files[dst]=(src,False)
+            # Review exact conflicts after build and before any app/config files are changed.
+            changed=[str(dst) for dst,(src,preserve) in files.items() if not preserve and dst.exists() and (dst.is_symlink() or digest(dst)!=digest(src))]
+            if changed:
+                print('\nExisting files to replace (backups retained):\n  '+'\n  '.join(sorted(changed)))
+                if not args.yes and input('Install these files? [y/N] ').strip().lower()!='y':print('Cancelled.');return
+            uninstall.registration(files,stage,names,owners,dirs)
+            apply_files(files,state)
+    print('\nInstalled: '+', '.join(CATALOG[n]['name'] for n in names))
+    print('Launch from your application menu. Desktop shortcuts and default apps were not changed.')
+    print('Settings: '+str(dirs['config']/'simple/preferences.toml'))
+    if 'simpleplayer' in names:print('Music settings: '+str(dirs['config']/'simpleplayer/config.toml'))
+    for name in names:
+        if CATALOG[name].get('after_install'):print('\n'+CATALOG[name]['name']+': '+CATALOG[name]['after_install'])
+
+def remove_apps(args):
+    if os.geteuid()==0:raise ValueError('Run Simpleinstaller as your normal user, not root.')
+    dirs=directories();registry=uninstall.read(dirs)
+    available=[name for name in registry['apps'] if name in CATALOG]
+    if not available:
+        print('No apps tracked by this installer version. Reinstall older Simpleinstaller apps once to register their files before uninstalling.');return 0
+    names=args.uninstall
+    if not names and len(CATALOG)==1:names=list(CATALOG)
+    if not names:
+        if not sys.stdin.isatty():raise ValueError('Specify apps: --uninstall APP or --uninstall all')
+        selected=choose_rows('Uninstall apps',[(n,CATALOG[n]['name'],'Keep settings and personal data') for n in registry['apps'] if n in CATALOG])
+        if selected is None:return 0
+        names=list(selected)
+    if 'all' in names:names=available
+    state=dirs['state']/'simpleinstaller'
+    with (state/'install.lock').open('a') as lock:
+        try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:raise ValueError('Another Simpleinstaller is running')
+        registry,selected,remove,keep=uninstall.plan(dirs,names)
+        if not selected:print('Selected apps are not tracked as installed.');return 0
+        print('Uninstall: '+', '.join(sorted(selected)))
+        print('Keep settings, personal data, sources, system packages and files needed by remaining apps.')
+        for path in remove:print('  Remove: '+str(path))
+        for path in keep:print('  Keep modified file: '+str(path))
+        if args.dry_run:return 0
+        if not args.yes and input('Uninstall these apps? [y/N] ').strip().lower()!='y':print('Cancelled.');return 0
+        backup=uninstall.apply(dirs,names)
+        print('Uninstalled: '+', '.join(sorted(selected)))
+        print('Backups and receipt: '+str(backup))
+    return 0
+
+def bundle(root,target,app=None):
+    names=[app] if app else list(CATALOG)
+    validate_sources(root,names)
+    target=Path(target).expanduser().absolute()
+    if target.exists():raise ValueError('Bundle destination already exists: '+str(target))
+    folder=app+'-installer' if app else 'simpleinstaller'
+    with tempfile.TemporaryDirectory(prefix='simpleinstaller-bundle-') as td:
+        out=Path(td)/folder;out.mkdir()
+        for name in ('simpleinstaller','README.md','recipes.py','wallpaper_pack.py','uninstall.py'):
+            shutil.copy2(HERE/name,out/name)
+        (out/'components.json').write_text(json.dumps({'schema':2,'components':{name:CATALOG[name] for name in names}},indent=2)+'\n')
+        for name in ('defaults','runtime',*(() if app else ('tests',))):shutil.copytree(HERE/name,out/name,ignore=IGNORE)
+        for name in recipes.roots_for(names):
+            shutil.copytree(root/name,out/'sources'/name,ignore=IGNORE)
+        wtype=out/'sources/simplepicker/assets/wtype'
+        if wtype.exists():wtype.write_text('#!/bin/sh\nexec /usr/bin/wtype "$@"\n');wtype.chmod(0o755)
+        if 'simplewallpaper' in names and wallpaper_pack.catalog(HERE):wallpaper_pack.bundle(HERE,out,target.parent)
+        if app:
+            for command,args in [('install',''),('uninstall','--uninstall '+app+' ')]:
+                script=out/command
+                script.write_text('#!/bin/sh\nset -eu\nhere=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$here/simpleinstaller" '+args+'"$@"\n')
+                script.chmod(0o755)
+            title=CATALOG[app]['name']
+            (out/'README.md').write_text(f"""# {title} installer
+
+This standalone bundle installs **{title}**. It contains its source and required
+shared components. It does not require Newinit or another installer bundle.
+Requires an Arch-based Linux system with Python 3 and pacman. Run as your normal
+user; only package installation uses sudo. Compatibility: {CATALOG[app].get('compatibility','GTK desktop')}.
+
+Extract this archive, open a terminal in `{folder}`, then run:
+
+```sh
+./install
+```
+
+The app is already selected. Choose optional features if offered, review the
+plan, and confirm. Commands are installed to `~/.local/bin`; application menu
+entries use paths generated for your user. Add `~/.local/bin` to PATH if needed.
+
+```sh
+./install --plan all
+./install --install all
+./uninstall --dry-run
+./uninstall
+```
+
+Uninstall is limited to this app, even with `--uninstall all`. It keeps personal
+settings, data, system packages, maintained source trees, and shared files needed
+by other registered Simple apps. Modified files are retained. Older installations
+need one reinstall to register their files. Keep this folder for uninstall/update.
+
+"""+('For daylight wallpapers, choose one or more themes. Put the matching\n`simpleinstaller-wallpaper-THEME.tar.gz` archives beside this extracted folder.\nThey stay compressed until selected. Use `--wallpaper-pack DIRECTORY` to read\narchives elsewhere, and `--list-wallpapers` to list available themes.\n' if app=='simplewallpaper' else 'Wallpaper image packs are not required by this app.\n'))
+        manifest={str(p.relative_to(out)):digest(p) for p in out.rglob('*') if p.is_file()}
+        (out/'SHA256.json').write_text(json.dumps(manifest,sort_keys=True,indent=2)+'\n')
+        with tarfile.open(target,'w:gz') as archive:archive.add(out,arcname=folder)
+    print('Source bundle:',target)
+
+def choose_rows(title,rows,chosen=None,allow_empty=False):
+    chosen=set(chosen or ());cursor=0;offset=0
+    def menu(screen):
+        nonlocal cursor,offset
+        try:curses.curs_set(0)
+        except curses.error:pass
+        normal=0;heading=curses.A_BOLD;active=curses.A_REVERSE;muted=0
+        try:
+            curses.start_color()
+            if curses.has_colors():
+                # Explicit colours keep the menu readable with terminal themes.
+                bg,fg,accent,red=(235,230,173,88) if curses.COLORS>=256 else (0,7,3,1)
+                for pair,front,back in ((1,fg,bg),(2,accent,bg),(3,fg,red),(4,fg,bg)):
+                    curses.init_pair(pair,front,back)
+                normal=curses.color_pair(1);heading=curses.color_pair(2)|curses.A_BOLD
+                active=curses.color_pair(3)|curses.A_BOLD;muted=curses.color_pair(4)
+                screen.bkgd(' ',normal)
+        except curses.error:pass
+        screen.keypad(True)
+        while True:
+            screen.erase();height,width=screen.getmaxyx()
+            panel_width=min(100,width-4);left=max(2,(width-panel_width)//2)
+            def line(y,text,style=None):
+                if 0<=y<height-1:
+                    try:screen.addnstr(y,left,text,max(0,panel_width),normal if style is None else style)
+                    except curses.error:pass
+            if height<12 or width<48:
+                line(0,'Enlarge terminal to 48 × 12. Q cancels.')
+            else:
+                capacity=min(len(rows),height-10)
+                offset=max(0,min(offset,cursor));offset=max(offset,cursor-capacity+1)
+                line(1,'SIMPLEINSTALLER · '+title,heading)
+                line(2,f'{len(chosen)} selected · Shared resources are included',muted)
+                line(3,'─'*panel_width,muted)
+                for n,(key,label,detail) in enumerate(rows[offset:offset+capacity],offset):
+                    text=(' ● ' if key in chosen else ' ○ ')+label
+                    line(4+n-offset,text.ljust(panel_width),active if n==cursor else normal)
+                bottom=4+capacity
+                line(bottom,'─'*panel_width,muted)
+                line(bottom+1,rows[cursor][2],muted)
+                line(bottom+2,'j/k Move · Space Select · a All · Enter Next · q Quit',muted)
+                if len(rows)>capacity:line(bottom+3,f'{cursor+1} / {len(rows)} · g First · G Last',muted)
+                elif not chosen and not allow_empty:line(bottom+3,'Select at least one app to continue.',muted)
+            screen.refresh();key=screen.getch()
+            if key in (ord('q'),27):return None
+            if height<12 or width<48:continue
+            if key in (curses.KEY_DOWN,ord('j'),14):cursor=(cursor+1)%len(rows)
+            elif key in (curses.KEY_UP,ord('k'),16,11):cursor=(cursor-1)%len(rows)
+            elif key in (curses.KEY_HOME,ord('g')):cursor=0
+            elif key in (curses.KEY_END,ord('G')):cursor=len(rows)-1
+            elif key==ord('a'):chosen.clear() if len(chosen)==len(rows) else chosen.update(x[0] for x in rows)
+            elif key==ord(' '):
+                value=rows[cursor][0]
+                if value in chosen:chosen.remove(value)
+                else:chosen.add(value)
+            elif key in (10,13,curses.KEY_ENTER) and (chosen or allow_empty):return chosen
+    return curses.wrapper(menu)
+
+
+def select_menu():
+    rows=[(name,spec['name']+' — '+spec['description'],spec.get('compatibility','')) for name,spec in CATALOG.items()]
+    selected=set(CATALOG) if len(CATALOG)==1 else choose_rows('Apps',rows)
+    if selected is None:return None
+    features=[(key,spec['name']+' · '+feature['label'],'Optional packages: '+', '.join(feature['packages'])) for name,spec in CATALOG.items() if name in selected for key,feature in spec['optional'].items()]
+    if features:
+        options=choose_rows('Optional features',features,allow_empty=True)
+        if options is None:return None
+        selected.update(options)
+    return selected
+
+def choose_preferences():
+    existing=directories()['config']/'simple/preferences.toml'
+    if existing.exists():
+        print('Keeping existing application choices: '+str(existing));return None
+    print('\nShared application choices. Enter keeps your desktop defaults.\nCommands accept arguments, for example: kitty -- or konsole -e.')
+    result={}
+    for key,label in [('terminal','Terminal'),('browser','Browser'),('file_manager','File manager'),('media_player','External media player'),('mail','Mail app')]:
+        raw=input(label+' [automatic]: ').strip()
+        result[key]=shlex.split(raw) if raw else []
+        if result[key] and not shutil.which(result[key][0]):print('Command is not installed yet: '+result[key][0])
+    return result
+
+
+def show_plan(names,options,args):
+    root=sources(args.source_root);validate_sources(root,names)
+    print('\nSIMPLEINSTALLER — review\n')
+    print('Apps: '+', '.join(CATALOG[n]['name'] for n in names))
+    print('Optional features: '+(', '.join(sorted(options)) or 'none'))
+    print('Packages (existing installations reused):\n  '+' '.join(packages(names,options)))
+    print('Build recipes: '+str(root))
+    print('Install: user binaries, app data, menu entries, missing defaults and source trees.')
+    print('Existing settings are preserved; changed program files are backed up.')
+    if getattr(args,'app_choices',None):
+        for key,value in args.app_choices.items():print('  '+key+': '+(shlex.join(value) if value else 'desktop default'))
+    print('No desktop replacement, services, autostart, account setup or key bindings.')
+    for name in names:print('  '+CATALOG[name]['name']+': '+CATALOG[name].get('compatibility','GTK desktop'))
+    if not args.no_packages:print('If packages are missing, pacman -Syu --needed will also offer a system upgrade.')
+    if 'simpleplayer' in names:print('Music folder (new settings only): '+args.music_dir)
+    if 'simplewallpaper' in names and 'daylight' in options:print('Wallpaper themes: '+', '.join(args.wallpaper_themes or ['choose at installation'])+'; place their archives beside the extracted installer folder.')
+
+def verify_bundle():
+    manifest=HERE/'SHA256.json'
+    if not manifest.exists():return
+    for rel,expected in json.loads(manifest.read_text()).items():
+        path=Path(rel)
+        if path.is_absolute() or '..' in path.parts:raise ValueError('Invalid bundle manifest path')
+        path=HERE/path
+        if path.is_symlink() or not path.is_file() or digest(path)!=expected:raise ValueError('Bundle verification failed: '+rel)
+
+def main(argv=None):
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--list-wallpapers',action='store_true',help='List optional daylight themes')
+    parser.add_argument('--wallpaper-themes',nargs='+',metavar='THEME',help='Daylight themes to install (or all)')
+    parser.add_argument('--uninstall',nargs='*',choices=[*CATALOG,'all'],help='Remove installed apps; omit app names for a selection menu')
+    parser.add_argument('--dry-run',action='store_true',help='Preview uninstall without changes')
+    parser.add_argument('--list',action='store_true',help='List available components')
+    parser.add_argument('--plan',nargs='+',choices=[*CATALOG,'all'],help='Read-only installation plan')
+    parser.add_argument('--install',nargs='+',choices=[*CATALOG,'all'],help='Install these components')
+    parser.add_argument('--check',nargs='+',choices=[*CATALOG,'all'],help='Check build/runtime dependencies without installing')
+    features={key:feature for spec in CATALOG.values() for key,feature in spec['optional'].items()}
+    for key,feature in features.items():parser.add_argument('--'+key.replace('_','-'),dest=key,action='store_true',help=feature['label'])
+    parser.add_argument('--music-dir',default='~/Music')
+    parser.add_argument('--source-root',help='Directory containing the maintained Simple app sources')
+    parser.add_argument('--no-packages',action='store_true',help='Require existing dependencies; do not run pacman')
+    parser.add_argument('--yes',action='store_true',help='Accept app file changes (pacman still asks separately)')
+    parser.add_argument('--bundle',metavar='FILE.tar.gz',help='Export portable source bundle')
+    parser.add_argument('--wallpaper-pack',metavar='FILE.tar.gz',help='Location of the optional daylight wallpaper archive')
+    parser.add_argument('--bundle-app',choices=list(CATALOG),help='Export only this app with --bundle')
+    args=parser.parse_args(argv)
+    if args.bundle_app and not args.bundle:parser.error('--bundle-app requires --bundle')
+    verify_bundle()
+    if sum(bool(getattr(args,k)) for k in ('list','plan','install','check','bundle','list_wallpapers'))+int(args.uninstall is not None)>1:parser.error('Choose one action')
+    if args.list_wallpapers:
+        for key,info in wallpaper_pack.catalog(HERE).items():print(key+' — '+info['label'])
+        return 0
+    if args.dry_run and args.uninstall is None:parser.error('--dry-run requires --uninstall')
+    if args.uninstall is not None:return remove_apps(args)
+    if not any((args.list,args.plan,args.install,args.check,args.bundle)) and sys.stdin.isatty() and sys.stdout.isatty():
+        action=input('Action: [Enter] Install/update, [u] Uninstall, [q] Quit: ').strip().lower()
+        if action=='q':return 0
+        if action=='u':args.uninstall=[];return remove_apps(args)
+        if action:parser.error('Unknown action')
+    if args.list:
+        for key,value in CATALOG.items():print(f'{key:15} {value["description"]}')
+        return 0
+    if args.bundle:bundle(sources(args.source_root),args.bundle,args.bundle_app);return 0
+    options={k for k in features if getattr(args,k)}
+    names=args.plan or args.install or args.check
+    if not names:
+        if not sys.stdin.isatty() or not sys.stdout.isatty():parser.error('Use --plan or --install outside an interactive terminal')
+        selected=select_menu()
+        if selected is None:return 0
+        names=[n for n in CATALOG if n in selected];options=selected-set(names)
+        if 'simpleplayer' in names:
+            args.music_dir=input('Music folder [~/Music]: ').strip() or '~/Music'
+        args.app_choices=choose_preferences()
+    names=list(CATALOG) if 'all' in names else list(dict.fromkeys(names))
+    for key in options:
+        if not any(key in CATALOG[name]['optional'] for name in names):parser.error('--'+key.replace('_','-')+' requires its owning app')
+    if any(c in args.music_dir for c in '\0\n\r') or not args.music_dir.strip():parser.error('Invalid music folder')
+    if args.wallpaper_themes and ('simplewallpaper' not in names or 'daylight' not in options):parser.error('--wallpaper-themes requires simplewallpaper with --daylight')
+    if 'simplewallpaper' in names and 'daylight' in options:
+        themes=wallpaper_pack.catalog(HERE)
+        if args.wallpaper_themes and any(t not in themes and t!='all' for t in args.wallpaper_themes):parser.error('Unknown wallpaper theme; use --list-wallpapers')
+        if not args.wallpaper_themes and not args.plan and not args.check:
+            if not sys.stdin.isatty():parser.error('Choose --wallpaper-themes THEME [THEME ...] or all; see --list-wallpapers')
+            selected=choose_rows('Wallpaper themes',[(key,info['label'],('Download: %.1f MB' % (info['bytes']/1024/1024)) if 'bytes' in info else 'Optional daylight image set') for key,info in themes.items()])
+            if selected is None:return 0
+            args.wallpaper_themes=sorted(selected)
+    if args.check:
+        validate_sources(sources(args.source_root),names)
+        errors=dependency_errors(names,options)
+        print('\n'.join(errors) if errors else 'Dependencies ready: '+', '.join(names))
+        return 1 if errors else 0
+    show_plan(names,options,args)
+    if args.plan:return 0
+    if not args.yes and input('\nContinue? [y/N] ').strip().lower()!='y':print('Cancelled.');return 0
+    install(args,names,options)
+    return 0
+if __name__=='__main__':
+    try:sys.exit(main())
+    except (ValueError,OSError,subprocess.CalledProcessError) as e:print('\nSimpleinstaller: '+str(e),file=sys.stderr);sys.exit(1)
+    except (KeyboardInterrupt,EOFError):print('\nCancelled.');sys.exit(130)

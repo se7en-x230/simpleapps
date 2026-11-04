@@ -1,0 +1,8 @@
+@import url("../simple/aliases.css");
+/* Lock dashboard layout. Appearance is centralized in ../simple/theme.css. */
+window.simplelock.screensaver .dashboard-panel { padding:24px; }
+window.simplelock.screensaver .dash-visualizer { margin-top:0; }
+window.simplelock .dash-calendar { padding:12px; }
+window.simplelock .dash-status-card { padding:5px 12px; }
+window.simplelock .dash-time { padding:12px 14px; }
+window.simplelock .dash-album-card { padding:12px; }

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Opt-in C UI for existing Python menu tools, including embedded Python scripts.
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ "$#" -eq 0 ]; then
+    echo 'Usage: ./run-tool COMMAND [ARGS...]' >&2
+    exit 2
+fi
+export SIMPLEPICKER_NATIVE="$root/simplepicker-native"
+export SIMPLEPICKER_NATIVE_ADAPTER=1
+export PYTHONPATH="$root/python${PYTHONPATH:+:$PYTHONPATH}"
+exec "$@"

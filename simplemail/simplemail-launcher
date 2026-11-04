@@ -1,0 +1,12 @@
+#!/bin/sh
+# Locate code independently of the user's home or window manager.
+bindir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+source=${SIMPLEMAIL_SOURCE:-}
+if [ -z "$source" ]; then
+    for candidate in "$bindir/../share/simplemail" "${XDG_DATA_HOME:-$HOME/.local/share}/simplemail" "$bindir/../src/simplemail"; do
+        if [ -f "$candidate/native-launch.py" ]; then source=$candidate; break; fi
+    done
+fi
+[ -n "$source" ] || { echo 'simplemail: application resources missing' >&2; exit 1; }
+export SIMPLEMAIL_SOURCE="$source"
+exec python3 "$source/native-launch.py" "$@"

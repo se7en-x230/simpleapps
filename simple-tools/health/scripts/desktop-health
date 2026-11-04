@@ -1,0 +1,272 @@
+#!/usr/bin/env python3
+"""Desktop health reports in Simplepicker, with copy, back, and optional terminal views."""
+import os as _path_os, sys as _path_sys
+from pathlib import Path as _Path
+_roots=[_Path(__file__).resolve().parents[3],_Path(_path_os.environ.get('XDG_DATA_HOME',_Path.home()/'.local/share')),_Path.home()/'.local/src']
+if _path_os.environ.get('SIMPLE_SOURCE_ROOT'):_roots.insert(0,_Path(_path_os.environ['SIMPLE_SOURCE_ROOT']))
+for _root in reversed(_roots):
+    for _name in ('simplepicker/python','simple-common'):
+        if (_root/_name).is_dir():_path_sys.path.insert(0,str(_root/_name))
+import argparse
+import hashlib
+import json
+import zipfile
+from datetime import datetime
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+HOME = Path.home()
+STATE = Path(os.environ.get('XDG_STATE_HOME', HOME / '.local/state'))
+CACHE = Path(os.environ.get('XDG_CACHE_HOME', HOME / '.cache'))
+SELF = str(Path(__file__).resolve())
+
+def clean(text):
+    text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
+    return ''.join(c for c in text if c in '\n\t' or ord(c) >= 32 and ord(c) != 127)
+
+def run(args):
+    try:
+        p = subprocess.run(args, capture_output=True, text=True, timeout=4)
+        return p.returncode, clean((p.stdout + p.stderr).strip())
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return -1, str(e)
+
+def tail(path, lines=200):
+    try:
+        with path.open('rb') as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - 65536))
+            data = f.read().decode('utf-8', errors='replace')
+        return clean('\n'.join(data.splitlines()[-lines:]))
+    except OSError as e:
+        return f'Unavailable: {e}'
+
+DISKFREE = str(Path(__file__).resolve().parents[2]/'disk/scripts/diskfree')
+
+def disk():
+    try:
+        result = subprocess.run([DISKFREE, '--report'], capture_output=True, text=True, timeout=30)
+        return ('Mounted storage' if result.returncode == 0 else 'Disk check unavailable',
+                clean(result.stdout + result.stderr))
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return 'Disk check unavailable', str(error)
+
+
+def services():
+    if Path('/proc/1/comm').read_text().strip() == 'systemd':
+        reports=[]; failures=[]; unavailable=False
+        for label,args in [('User services',['systemctl','--user','--failed','--no-legend','--no-pager']),
+                           ('System services',['systemctl','--failed','--no-legend','--no-pager'])]:
+            code,output=run(args)
+            unavailable |= code != 0
+            if code == 0: failures.extend(output.splitlines())
+            reports.append(label+'\n'+(output or 'No failed units.'))
+        status=f'{len(failures)} failed' if failures else ('Some checks unavailable' if unavailable else 'No failed services')
+        return status,'\n\n'.join(reports)
+    reports = []
+    failures = []
+    unavailable = False
+    user_ok = False
+    system_permission = False
+    for label, args in [('User services', ['dinitctl', '--user', 'list']), ('System services', ['dinitctl', '--system', 'list'])]:
+        code, output = run(args)
+        reports.append(label + '\n' + output)
+        if label == 'User services':
+            user_ok = code == 0
+        if label == 'System services':
+            system_permission = code != 0 and 'permission denied' in output.lower()
+        unavailable |= code != 0
+        if code == 0:
+            # dinit marks failed services with the letter X in the status field.
+            failures += [line for line in output.splitlines() if re.match(r'^\[[^\]]*X[^\]]*\]', line)]
+    status = f'{len(failures)} failed' if failures else ('Some checks unavailable' if unavailable else 'No failed services')
+    if not failures and user_ok and system_permission:
+        status = 'No failed user services; system check needs permission'
+        reports.append('System service status is unknown: your user cannot read the system dinit socket. This is a check limitation, not a detected service failure.')
+    return status, '\n\n'.join(reports) + '\n\nWhat these services do:\n  syncthing — synchronizes your configured folders with other devices.\n  muse-overview-watcher — moves downloaded *-muse-overview.png images\n    from ~/Downloads to ~/Sync/Shares/Apps/ElectronicMonk/Screenshots.\n  boot — groups services started for this session.\n\nStopped services may be intentional. Process state does not prove application health.'
+
+def updates():
+    path = Path('/var/log/package-update-download.log')
+    text = tail(path)
+    match = re.search(r'Finished: (.+) \(status (\d+)\)', text)
+    if match:
+        status = ('Last download OK' if match[2] == '0' else 'Last download failed') + ' — ' + match[1]
+    else:
+        status = 'No completed download recorded'
+    return status, f'Automatic repository-package downloads (not installation)\nLog: {path}\n\n{text}'
+
+def sync():
+    rows = []
+    for label, name in [('Syncthing', 'syncthing'), ('Dropbox', 'dropbox'), ('pCloud', 'pcloud|pcloudcc')]:
+        code, _ = run(['pgrep', '-u', str(os.getuid()), '-x', name])
+        rows.append(f'{label}: ' + ('running' if code == 0 else 'not running' if code == 1 else 'check unavailable'))
+    sessions = []
+    for path in sorted((STATE / 'system-control').glob('action-*.log'), key=lambda p: p.stat().st_mtime, reverse=True)[:100]:
+        text = tail(path, 30)
+        if text.startswith('Sync folder\n'):
+            stamp = datetime.fromtimestamp(path.stat().st_mtime).strftime('%Y-%m-%d %H:%M')
+            sessions.append(f'{stamp} — {path}\n{text}')
+            if len(sessions) == 3:
+                break
+    detail = '\n'.join(rows) + '\n\nThese are process checks, not proof that files are up to date.\nThe folder-sync log records session exit only; cancellation can also exit successfully.\n\nRecent folder-sync sessions:\n' + ('\n\n'.join(sessions) or 'No recorded sessions.')
+    return f'{sum(row.endswith(": running") for row in rows)}/3 sync apps running', detail
+
+def logs():
+    paths = [CACHE / 'noctalia/noctalia.log', STATE / 'mango/autostart.log']
+    reports = []
+    groups = {}
+    count = 0
+    for path in paths:
+        text = tail(path)
+        if text.startswith('Unavailable:'):
+            reports.append(f'{path}\n{text}')
+            continue
+        for line in text.splitlines():
+            if not re.search(r'\berror\b|\bfailed\b|\[ERR\]|Traceback', line, re.I):
+                continue
+            count += 1
+            key = re.sub(r'^(?:\d{4}-\d{2}-\d{2} )?\d{2}:\d{2}:\d{2}\.\d+\s*', '', line)
+            key = re.sub(r'\[Child \d+, ([^]]*?) #\d+\]', r'[Child, \1]', key)
+            key = re.sub(r'Decoder=[0-9a-f]+', 'Decoder=<address>', key)
+            group = groups.setdefault(key, {'count': 0, 'last': '', 'paths': set()})
+            group['count'] += 1
+            group['last'] = line
+            group['paths'].add(str(path))
+    for key, group in sorted(groups.items(), key=lambda item: item[1]['count'], reverse=True):
+        reports.append(f"{group['count']} matching log lines\n{group['last']}\nSources: " + ', '.join(sorted(group['paths'])))
+    if not reports:
+        reports.append('No matching errors in the recent log tails.')
+    return f'{len(groups)} distinct messages in recent log history', '\n\n'.join(reports) + f'\n\n{count} matching lines in the last 200 lines per log. The same event can appear in both logs. These are historical messages, not a count of active faults; fixed errors remain visible until they leave the log tails.'
+
+
+def actions():
+    paths = sorted((STATE / 'system-control').glob('action-*.log'), key=lambda p: p.stat().st_mtime, reverse=True)[:10]
+    report = '\n\n'.join(f'{datetime.fromtimestamp(p.stat().st_mtime):%Y-%m-%d %H:%M} — {p.name}\n{tail(p, 30)}' for p in paths)
+    return f'{len(paths)} recent sessions', report or 'No system-control sessions recorded.'
+
+
+DESKTOP_CHECK = 'desktop-check'
+RECOVERY = _Path(_path_os.environ.get('XDG_STATE_HOME',_Path.home()/'.local/state'))/'desktop-maintenance'
+
+def desktop():
+    try:
+        result = subprocess.run([DESKTOP_CHECK, 'check'], capture_output=True, text=True, timeout=300)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return '⚠ Check unavailable', str(error)
+    details = clean(result.stdout + result.stderr)
+    if result.returncode:
+        return '✕ Needs attention', details + '\n\nThe failed checks above need review. No packages or settings were changed.'
+    return '✓ Checks passed', details + '\n\nChecks configuration and dependencies. No package updates, mail connections, or live UI tests are performed.'
+
+def recovery():
+    snapshots = sorted(RECOVERY.glob('*.zip'), reverse=True)
+    if not snapshots:
+        return '⚠ No recovery snapshots', 'Use Create recovery snapshot in Health to save the current custom desktop files.'
+    latest = snapshots[0]
+    try:
+        with zipfile.ZipFile(latest) as archive:
+            manifest = json.loads(archive.read('manifest.json'))
+            if not manifest: raise ValueError('Empty snapshot manifest')
+            for name, meta in manifest.items():
+                if hashlib.sha256(archive.read('files/' + name)).hexdigest() != meta['sha256']:
+                    raise ValueError('Checksum mismatch: ' + name)
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile) as error:
+        return '✕ Latest snapshot could not be verified', f'{latest}\n{error}\n\nOlder snapshots are retained in {RECOVERY}.'
+    recent = '\n'.join(f'{p.name} ({p.stat().st_size / 1024:.0f} KiB)' for p in snapshots[:10])
+    return '✓ Latest snapshot verified', (
+        f'Latest: {latest}\n{len(manifest)} custom files verified against their saved checksums.\n'
+        f'{len(snapshots)} snapshots available.\n\nRecent snapshots\n{recent}\n\n'
+        'These restore custom scripts and settings, not package versions or user documents. '
+        'A verified archive does not prove that its saved configuration is healthy.\n\n'
+        'Snapshots are included in future Newinstall encrypted recovery backups; '
+        'this report does not confirm an external backup has completed.\n\n'
+        f'To preview a restore: desktop-check restore "{latest}"\n'
+        'Nothing is restored without --apply. Applying saves the current files first.')
+
+def create_recovery():
+    try:
+        result = subprocess.run([DESKTOP_CHECK, 'snapshot', '--label', 'health-menu'],
+                                capture_output=True, text=True, timeout=120)
+        text = ('✓ Snapshot saved' if result.returncode == 0 else '✕ Snapshot failed') + '\n\n' + clean(result.stdout + result.stderr)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        text = '✕ Snapshot unavailable\n\n' + str(error)
+    # Fixed text: refreshing the report must not create more snapshots.
+    Menu('Recovery snapshot').details(text, sections=True)
+
+CHECKS = {'desktop': ('Desktop compatibility', desktop), 'recovery': ('Recovery snapshots', recovery), 'disk': ('Disk space', disk), 'services': ('Services', services), 'updates': ('Package downloads', updates), 'sync': ('Sync', sync), 'logs': ('Desktop errors', logs), 'actions': ('System-control history', actions)}
+
+def check(key):
+    try:
+        return CHECKS[key][1]()
+    except Exception as e:
+        return 'Check unavailable', str(e)
+
+def report(key):
+    status, details = check(key)
+    return f'{CHECKS[key][0]} — {status}\nChecked: {datetime.now():%Y-%m-%d %H:%M:%S}\n\n{details}\n'
+
+from simplepicker_api import Menu, BACK
+
+def view_report(key):
+    if key == 'disk':
+        subprocess.run([DISKFREE], check=False)
+        return
+    def terminal():
+        subprocess.run(['app-terminal', '--class', 'system-health', '--title', CHECKS[key][0],
+                        '--', SELF, '--view', key], check=False)
+    Menu(CHECKS[key][0]).details(lambda: report(key), sections=True, terminal=terminal)
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--report', choices=[*CHECKS, 'all'])
+    parser.add_argument('--view', choices=CHECKS)
+    args = parser.parse_args()
+    if args.report:
+        print('\n'.join(report(k) for k in CHECKS) if args.report == 'all' else report(args.report))
+        return
+    if args.view:
+        text = report(args.view)
+        if sys.stdout.isatty() and shutil.which('less'):
+            subprocess.run(['less', '-R', '-+F', '-P', 'Desktop health — arrows to scroll; q to close'], input=text, text=True)
+        else:
+            print(text)
+        return
+    hub = str(Path(__file__).resolve().parents[2]/'tools/scripts/system-hub')
+    os.execv(hub, [hub, '--health'])
+
+def health_menu():
+    menu = Menu('Desktop health', icon='dialog-information-symbolic')
+    # Opening a menu should not launch diagnostic processes or read log files.
+    labels = {key: title for key, (title, _check) in CHECKS.items()}
+    labels['create-recovery'] = 'Create recovery snapshot'
+    labels['back'] = 'Back'
+    while True:
+        choice = menu.choose(labels, prompt='System / Health', icons={
+            'desktop':'preferences-system-symbolic', 'recovery':'document-revert-symbolic',
+            'create-recovery':'document-save-symbolic', 'disk':'drive-harddisk-symbolic',
+            'services':'applications-system-symbolic', 'updates':'system-software-update-symbolic',
+            'sync':'emblem-synchronizing-symbolic', 'logs':'dialog-warning-symbolic',
+            'actions':'document-open-recent-symbolic', 'back':'go-previous-symbolic',
+        }, descriptions={
+            'desktop': 'Check custom apps, shortcuts, styles and dependencies — no update',
+            'recovery': 'Verify the latest saved snapshot and show recovery information',
+            'create-recovery': 'Save the current custom scripts and settings',
+        })
+        if not choice or choice in (BACK, 'back'):
+            return
+        if choice == 'create-recovery':
+            create_recovery()
+        elif choice in CHECKS:
+            view_report(choice)
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (OSError, KeyboardInterrupt) as e:
+        print(f'Desktop health: {e}', file=sys.stderr)
+        sys.exit(1)
