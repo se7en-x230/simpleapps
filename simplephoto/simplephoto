@@ -1,0 +1,536 @@
+#!/usr/bin/env python3
+"""Conservative local enhancement; save a separate SDR copy."""
+from pathlib import Path
+import os,re,sys,tempfile,threading,io,argparse
+import numpy as np
+from PIL import Image,ImageOps,ImageCms,ImageFilter,ImageDraw
+
+def signature(p):
+    s=p.stat();return s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns
+
+def read(p):
+    before=signature(p)
+    with Image.open(p) as im:
+        if getattr(im,'n_frames',1)!=1:raise ValueError('Please choose a single still image.')
+        if im.mode not in ('RGB','RGBA','L','LA'):raise ValueError('This trial supports ordinary RGB/grayscale JPEG, PNG and WebP images.')
+        kind=im.format;im=ImageOps.exif_transpose(im);im.load()
+        profile=im.info.get('icc_profile');exif=im.getexif().tobytes()
+        im=im.convert('RGBA' if 'A' in im.mode else 'RGB')
+        if profile:
+            # Work and preview in sRGB so colour math has a defined colour space.
+            target=ImageCms.createProfile('sRGB')
+            im=ImageCms.profileToProfile(im,io.BytesIO(profile),target,outputMode=im.mode)
+            profile=ImageCms.ImageCmsProfile(target).tobytes()
+    if signature(p)!=before:raise ValueError('Image changed while loading.')
+    small=im.copy();small.thumbnail((1200,800))
+    a=np.asarray(small.convert('RGB'),dtype=np.float32)/255
+    l=a@np.array([.2126,.7152,.0722],dtype=np.float32)
+    # Dark scenes receive a limited lift; bright scenes receive almost none.
+    lift=float(np.clip((.48-np.median(l))*1.4,0,.45))
+    return im,small,lift,kind,before,profile,exif
+
+CONTROLS=('Brightness','Contrast','Highlights','Shadows','Saturation','Vibrance','Warmth','Tint')
+
+def enhance(im,settings):
+    values={name:float(settings.get(name,0))/100 for name in CONTROLS}
+    if not all(np.isfinite(v) and -1<=v<=1 for v in values.values()):raise ValueError('Adjustments must be between -100 and 100.')
+    if not any(values.values()):return im.copy()
+    out=im.copy()
+    weights=np.array([.2126,.7152,.0722],dtype=np.float32)
+    for y in range(0,im.height,128):
+        box=(0,y,im.width,min(y+128,im.height));a=np.asarray(im.crop(box)).copy();rgb=a[:,:,:3].astype(np.float32)/255
+        lum=rgb@weights
+        # Smooth tone shifts taper at black and white; zero is the original.
+        target=lum+values['Brightness']*.8*lum*(1-lum)
+        target+=values['Shadows']*1.8*lum*(1-lum)**3
+        target+=values['Highlights']*1.8*lum**3*(1-lum)
+        target=np.clip(target,0,1)
+        c=values['Contrast']
+        if c>=0:
+            power=1+1.5*c
+            lo=target**power;hi=(1-target)**power
+            target=lo/np.maximum(lo+hi,1e-6)
+        else:target=.5+(target-.5)*(1+.7*c)
+        # Luminance replacement preserves neutral tones and avoids division at black.
+        rgb+= (target-lum)[:,:,None]
+        rgb=np.clip(rgb,0,1)
+        warmth=values['Warmth']*.12;tint=values['Tint']*.10
+        mid=4*target*(1-target)
+        rgb+=mid[:,:,None]*np.array([warmth+tint/2,-tint,-warmth+tint/2],dtype=np.float32)
+        rgb=np.clip(rgb,0,1);gray=rgb@weights
+        saturation=(rgb.max(axis=2)-rgb.min(axis=2))/np.maximum(rgb.max(axis=2),1e-6)
+        factor=(1+values['Saturation'])*(1+values['Vibrance']*.65*(1-saturation))
+        delta=(rgb-gray[:,:,None])*factor[:,:,None]
+        bound=np.where(delta>0,(1-gray[:,:,None])/np.maximum(delta,1e-6),gray[:,:,None]/np.maximum(-delta,1e-6))
+        limit=np.minimum(1,np.maximum(0,bound.min(axis=2)))
+        rgb=gray[:,:,None]+delta*limit[:,:,None]
+        a[:,:,:3]=np.rint(np.clip(rgb,0,1)*255).astype(np.uint8)
+        out.paste(Image.fromarray(a),box)
+    return out
+
+def rotate_data(data,rect,mask,history,clockwise=True):
+    im,small,lift,kind,before,profile,exif=data
+    iw,ih=im.size;operation=Image.Transpose.ROTATE_270 if clockwise else Image.Transpose.ROTATE_90
+    if rect:
+        x,y,w,h=rect
+        rect=(ih-y-h,x,h,w) if clockwise else (y,iw-x-w,h,w)
+    metadata=Image.Exif();metadata.load(exif)
+    for key in (256,257,274,40962,40963):
+        if key in metadata:del metadata[key]
+    rotated=(im.transpose(operation),small.transpose(operation),lift,kind,before,profile,metadata.tobytes())
+    return rotated,rect,mask.transpose(operation) if mask is not None else None,[item.transpose(operation) for item in history]
+
+def mirror_data(data,rect,mask,history,horizontal=True):
+    im,small,lift,kind,before,profile,exif=data
+    iw,ih=im.size;operation=Image.Transpose.FLIP_LEFT_RIGHT if horizontal else Image.Transpose.FLIP_TOP_BOTTOM
+    if rect:
+        x,y,w,h=rect;rect=(iw-x-w,y,w,h) if horizontal else (x,ih-y-h,w,h)
+    metadata=Image.Exif();metadata.load(exif)
+    if 274 in metadata:del metadata[274]
+    mirrored=(im.transpose(operation),small.transpose(operation),lift,kind,before,profile,metadata.tobytes())
+    return mirrored,rect,mask.transpose(operation) if mask is not None else None,[item.transpose(operation) for item in history]
+
+def paint_mask(mask,start,end,radius,erase=False):
+    """Paint a feathered stroke; white protects pixels, black selects blur."""
+    radius=max(1,float(radius));pad=int(radius*1.6)+2
+    x0=max(0,int(min(start[0],end[0]))-pad);y0=max(0,int(min(start[1],end[1]))-pad)
+    x1=min(mask.width,int(max(start[0],end[0]))+pad+1);y1=min(mask.height,int(max(start[1],end[1]))+pad+1)
+    if x1<=x0 or y1<=y0:return
+    patch=Image.new('L',(x1-x0,y1-y0),0);draw=ImageDraw.Draw(patch)
+    a=(start[0]-x0,start[1]-y0);b=(end[0]-x0,end[1]-y0)
+    draw.line([a,b],fill=255,width=max(1,round(radius*2)))
+    for x,y in (a,b):draw.ellipse((x-radius,y-radius,x+radius,y+radius),fill=255)
+    patch=patch.filter(ImageFilter.GaussianBlur(max(.5,radius*.12)))
+    old=mask.crop((x0,y0,x1,y1));paint=Image.new('L',patch.size,255 if erase else 0)
+    mask.paste(Image.composite(paint,old,patch),(x0,y0))
+
+def portrait_blur(im,mask,amount):
+    if amount<=0:return im
+    if mask is None:raise ValueError('Paint a blur selection first.')
+    # Blur only background colours, reducing foreground colour bleeding at edges.
+    small=im.convert('RGB');small.thumbnail((1600,1600))
+    alpha=mask.resize(small.size,Image.Resampling.BILINEAR)
+    weight=ImageOps.invert(alpha)
+    radius=max(.5,min(small.size)*.035*amount/100)
+    pixels=np.asarray(small,dtype=np.float32)
+    weighted=Image.fromarray(np.rint(pixels*(np.asarray(weight,dtype=np.float32)/255)[:,:,None]).astype(np.uint8))
+    numerator=np.asarray(weighted.filter(ImageFilter.GaussianBlur(radius)),dtype=np.float32)
+    denominator=np.asarray(weight.filter(ImageFilter.GaussianBlur(radius)),dtype=np.float32)/255
+    background=np.where((denominator>.01)[:,:,None],numerator/np.maximum(denominator[:,:,None],.01),pixels)
+    background=Image.fromarray(np.rint(np.clip(background,0,255)).astype(np.uint8)).resize(im.size,Image.Resampling.BICUBIC)
+    foreground=mask.resize(im.size,Image.Resampling.BILINEAR)
+    result=Image.composite(im.convert('RGB'),background,foreground)
+    if im.mode=='RGBA':result.putalpha(im.getchannel('A'))
+    return result
+
+def save(p,data,settings,rect=None,mask=None):
+    im,small,lift,kind,before,profile,exif=data
+    if signature(p)!=before:raise ValueError('Original changed; reopen it before saving.')
+    if mask is not None:mask=mask.resize(im.size,Image.Resampling.BILINEAR)
+    if rect:
+        x,y,w,h=rect
+        if min(x,y)<0 or min(w,h)<1 or x+w>im.width or y+h>im.height:raise ValueError('Invalid crop bounds')
+        im=im.crop((x,y,x+w,y+h))
+        if mask is not None:mask=mask.crop((x,y,x+w,y+h))
+        metadata=Image.Exif();metadata.load(exif)
+        for key in (256,257,40962,40963):
+            if key in metadata:del metadata[key]
+        exif=metadata.tobytes()
+    result=portrait_blur(enhance(im,settings),mask,settings.get("Portrait blur",0))
+    ext={'JPEG':'jpg','PNG':'png','WEBP':'webp'}.get(kind,'png')
+    with tempfile.TemporaryDirectory(prefix='.enhance-',dir=p.parent) as folder:
+        stage=Path(folder)/('copy.'+ext)
+        kwargs={'icc_profile':profile,'exif':exif}
+        if ext in ('jpg','webp'):kwargs['quality']=95
+        result.save(stage,**kwargs)
+        if signature(p)!=before:raise ValueError('Original changed while saving.')
+        m=re.fullmatch(r'(.*)~([0-9]+)',p.stem);stem=m[1] if m else p.stem;n=max(2,int(m[2])+1) if m else 2
+        while True:
+            target=p.with_name(f'{stem}~{n}.{ext}')
+            try:os.link(stage,target);return target
+            except FileExistsError:n+=1
+
+UI_CONTROLS=(*CONTROLS,'Portrait blur','Zoom')
+
+def main(argv):
+    parser=argparse.ArgumentParser(description='SimplePhoto: crop and adjust photos; save a separate copy.')
+    parser.add_argument('--crop',action='store_true',help='Start in crop mode')
+    parser.add_argument('files',nargs='*');args=parser.parse_args(argv)
+    import gi
+    gi.require_version('Gtk','4.0')
+    from gi.repository import Gtk,Gdk,GdkPixbuf,Gio,GLib
+    class App(Gtk.Application):
+        def __init__(self):
+            super().__init__(application_id='space.go7.SimplePhoto',flags=Gio.ApplicationFlags.NON_UNIQUE)
+            self.files=iter(Path(p).absolute() for p in args.files);self.data=None;self.busy=False;self.timer=None
+            self.zoom=None;self.view_center=(.5,.5);self.pan_origin=None;self.focused=False;self.was_fullscreen=False;self.mask=None;self.brush_mode=False;self.overlay=True;self.brush_radius=25;self.brush_last=None;self.cursor=None;self.overlay_pix=None;self.history=[];self.fast_crop=False;self.crop_mode=args.crop;self.original=False;self.rect=None;self.pix=None;self.active=0;self.anchor=None
+            self.connect('activate',self.activate)
+        def activate(self,*_):
+            self.win=Gtk.ApplicationWindow(application=self,title='SimplePhoto');self.win.add_css_class('simplephoto');self.win.set_default_size(1100,850)
+            self.win.connect('close-request',lambda *_:self.busy)
+            self.win.connect('notify::is-active',lambda win,*_:self.release_zoom() if not win.is_active() else None)
+            box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=5)
+            for side in ('top','bottom','start','end'):getattr(box,'set_margin_'+side)(8)
+            self.win.set_child(box)
+            row=Gtk.Box(spacing=8);box.append(row);self.header=row
+            self.app_name=Gtk.Label(label='SimplePhoto',xalign=0);self.app_name.add_css_class('photo-heading');row.append(self.app_name)
+            self.title=Gtk.Label(label='',xalign=0,hexpand=True);self.title.add_css_class('photo-filename');self.title.set_ellipsize(3);row.append(self.title)
+            for label,callback in [('Open [o]',self.choose),('Crop [c]',self.toggle_crop),('Blur [b]',self.toggle_brush),('Save [s]',self.save_clicked)]:
+                b=Gtk.Button(label=label);b.connect('clicked',callback);row.append(b)
+                if label.startswith('Save'):self.save_button=b
+            self.area=Gtk.DrawingArea(hexpand=True,vexpand=True,focusable=True);self.area.set_draw_func(self.draw);box.append(self.area)
+            drag=Gtk.GestureDrag();drag.set_button(1);drag.connect('drag-begin',self.begin);drag.connect('drag-update',self.drag);drag.connect('drag-end',self.end_drag);self.area.add_controller(drag)
+            motion=Gtk.EventControllerMotion();motion.connect('motion',self.motion);motion.connect('leave',self.leave);self.area.add_controller(motion)
+            self.brush_tools=Gtk.Box(spacing=8);box.append(self.brush_tools);self.brush_tools.set_visible(False)
+            self.brush_tools.append(Gtk.Label(label='Brush size'))
+            self.brush_size=Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL,4,250,2);self.brush_size.set_value(50);self.brush_size.set_draw_value(True);self.brush_size.set_digits(0);self.brush_size.set_size_request(180,-1)
+            self.brush_size.connect('value-changed',lambda slider:self.resize_brush(slider.get_value()/2));self.brush_tools.append(self.brush_size)
+            self.brush_tools.append(Gtk.Label(label='Blur'))
+            self.brush_amount=Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL,0,100,1);self.brush_amount.set_draw_value(True);self.brush_amount.set_digits(0);self.brush_amount.set_hexpand(True)
+            self.brush_amount.connect('value-changed',lambda slider:self.sliders['Portrait blur'].set_value(slider.get_value()));self.brush_tools.append(self.brush_amount)
+            self.brush_tools.append(Gtk.Label(label='Hold Space: zoom · Shift: erase · Enter: done'))
+            grid=Gtk.Grid(column_spacing=10,row_spacing=0,column_homogeneous=True);box.append(grid);self.controls=grid;self.sliders={};self.labels=[]
+            for i,name in enumerate(UI_CONTROLS):
+                row=Gtk.Box(spacing=7);label=Gtk.Label(label='Blur amount' if name=='Portrait blur' else name,xalign=0);label.set_size_request(70,-1);row.append(label);self.labels.append(label)
+                slider=Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL,100 if name=='Zoom' else (0 if name=='Portrait blur' else -100),400 if name=='Zoom' else 100,1);slider.set_hexpand(True);slider.set_draw_value(False);slider.set_value(100 if name=='Zoom' else 0);slider.add_css_class('photo-scale')
+                number=Gtk.Label(label='100%' if name=='Zoom' else '0',width_chars=4);row.append(slider);row.append(number)
+                def changed(slider,i=i,number=number):
+                    number.set_text(str(round(slider.get_value()))+('%' if UI_CONTROLS[i]=='Zoom' else ''));self.active=i;self.highlight()
+                    if UI_CONTROLS[i]=='Portrait blur':self.brush_amount.set_value(slider.get_value())
+                    if UI_CONTROLS[i]=='Zoom':self.area.queue_draw()
+                    else:self.schedule()
+                slider.connect('value-changed',changed);self.sliders[name]=slider;grid.attach(row,i%5,i//5,1,1)
+            self.crop_tools=Gtk.Box(spacing=10);box.append(self.crop_tools);self.crop_tools.set_visible(False)
+            for label,callback in [('Done [Enter]',self.toggle_crop),('Full image [r]',self.reset_crop)]:
+                button=Gtk.Button(label=label);button.connect('clicked',callback);self.crop_tools.append(button)
+            self.crop_info=Gtk.Label(hexpand=True,xalign=0);self.crop_tools.append(self.crop_info)
+            self.status=Gtk.Label(xalign=0,wrap=True);box.append(self.status);self.status.set_visible(False)
+            self.footer=Gtk.Label(label='j/k: select · h/l: adjust · v: before/after · c: crop · b: blur brush · s: save ~2 copy · ?: all keys',xalign=0);box.append(self.footer)
+            display=Gdk.Display.get_default()
+            fallback=Gtk.CssProvider();fallback.load_from_data(b'@define-color simple_bg #2a2a2a; @define-color simple_fg #e4ded2; @define-color simple_muted #928374; @define-color simple_heading #f3a40a; @define-color simple_button #3b3b3b; @define-color simple_hover #454545; @define-color simple_border #49454a;')
+            Gtk.StyleContext.add_provider_for_display(display,fallback,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            config=Path(os.environ.get('XDG_CONFIG_HOME',str(Path.home()/'.config')))/'simple'
+            data=Path(os.environ.get('XDG_DATA_HOME',str(Path.home()/'.local/share')))/'simple'
+            for theme in (config/'aliases.css',config/'theme.css',data/'aliases.css',data/'theme.css'):
+                if theme.is_file():
+                    shared=Gtk.CssProvider();shared.load_from_path(str(theme));Gtk.StyleContext.add_provider_for_display(display,shared,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION+1);break
+            appearance=Gtk.CssProvider();appearance.load_from_data(b'window.simplephoto { background: @simple_bg; color: @simple_fg; } window.simplephoto .photo-heading { color: @simple_heading; font-size: 18px; font-weight: bold; margin-right: 12px; } window.simplephoto .photo-filename { color: @simple_muted; } window.simplephoto button { background: @simple_button; color: @simple_fg; border: 1px solid @simple_border; border-radius: 9px; box-shadow: none; } window.simplephoto button:hover { background: @simple_hover; } window.simplephoto scale trough { background: @simple_button; } window.simplephoto scale highlight { background: @simple_heading; } window.simplephoto scale slider { background: @simple_fg; border: 1px solid @simple_border; box-shadow: none; } window.simplephoto .photo-selected { color: @simple_heading; font-weight: bold; }')
+            Gtk.StyleContext.add_provider_for_display(display,appearance,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION+2)
+            css=Gtk.CssProvider();css.load_from_data(b'.photo-scale { min-height: 16px; padding: 2px 0; margin: 0; } .photo-scale trough { min-height: 3px; } .photo-scale slider { min-width: 10px; min-height: 10px; } ')
+            Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(),css,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            keys=Gtk.EventControllerKey();keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE);keys.connect('key-pressed',self.key);keys.connect('key-released',self.key_released);self.win.add_controller(keys)
+            self.highlight();self.win.present()
+            if args.files:self.next()
+            else:self.choose()
+        def show_status(self,text):
+            self.status.set_text(text);self.status.set_visible(bool(text))
+        def highlight(self):
+            for i,label in enumerate(self.labels):
+                (label.add_css_class if i==self.active else label.remove_css_class)('photo-selected')
+        def settings(self):return {name:slider.get_value() for name,slider in self.sliders.items() if name!='Zoom'}
+        def choose(self,*_):
+            if self.busy:return
+            dialog=Gtk.FileChooserDialog(title='Open photo',transient_for=self.win,modal=True,action=Gtk.FileChooserAction.OPEN)
+            dialog.add_buttons('Cancel',Gtk.ResponseType.CANCEL,'Open',Gtk.ResponseType.ACCEPT)
+            dialog.set_default_response(Gtk.ResponseType.ACCEPT)
+            filt=Gtk.FileFilter();filt.set_name('Photos')
+            for mime in ('image/jpeg','image/png','image/webp'):filt.add_mime_type(mime)
+            dialog.add_filter(filt)
+            def response(d,r):
+                if r==Gtk.ResponseType.ACCEPT:
+                    path=d.get_file().get_path()
+                    if path:self.files=iter([Path(path)]);self.next()
+                d.destroy()
+            dialog.connect('response',response);dialog.present();self.dialog=dialog
+        def help(self,*_):
+            dialog=Gtk.MessageDialog(transient_for=self.win,modal=True,buttons=Gtk.ButtonsType.CLOSE,text='SimplePhoto keys',secondary_text='Adjust: j/k or ↑/↓ select control; h/l or ←/→ change value. Shift: steps of 10. 0: reset selected (Zoom returns to 100% fit); r: reset all adjustments; g/G: first/last control. Zoom is view-only; drag the zoomed image to pan.\n\nb: full-window manual blur brush. Hold Space to zoom at the pointer; release to fit. Paint to blur; Shift-drag erases; [/] brush size; m overlay; u undo stroke; r clear mask; Enter finish. v: original/edited; t/Shift+t: rotate right/left; x/Shift+x: mirror left-right/top-bottom; c: toggle crop. Crop starts with a centred rectangle. h/j/k/l move it by 1% of image size; Shift resizes its bottom/right edge; f toggles fast 5% movement/resizing; Ctrl uses 1-pixel precision. z/Shift+z shrink/grow around the centre (also -/+ and keypad -/+); r selects the full image. Mouse dragging is optional. Enter applies crop preview and returns to adjustments.\n\ns or Ctrl+s: save copy; n / ]: next photo; o: open; q / Esc: close (Esc exits crop first); ?: this help.\n\nOriginal files stay untouched. Copies are SDR; HDR gain maps and Motion Photo video are not retained.')
+            dialog.connect('response',lambda d,*_:d.destroy());dialog.present()
+        def work(self,fn,done):
+            self.busy=True;self.save_button.set_sensitive(False)
+            for slider in self.sliders.values():slider.set_sensitive(False)
+            def run():
+                try:r,e=fn(),None
+                except Exception as exc:r,e=None,str(exc)
+                GLib.idle_add(finish,r,e)
+            def finish(r,e):
+                self.busy=False
+                for slider in self.sliders.values():slider.set_sensitive(True)
+                if e:
+                    if self.mask is None and self.sliders['Portrait blur'].get_value()!=0:
+                        self.sliders['Portrait blur'].set_value(0)
+                        if self.timer:GLib.source_remove(self.timer);self.timer=None
+                    self.show_status(e)
+                else:done(r)
+                self.save_button.set_sensitive(self.data is not None)
+                return False
+            threading.Thread(target=run,daemon=True).start()
+        def next(self,*_):
+            if self.busy:return
+            try:path=next(self.files)
+            except StopIteration:self.show_status('No more photos. Press o to open another.');return
+            self.path=path;self.view_center=(.5,.5);self.pan_origin=None;self.mask=None;self.history=[];self.brush_mode=False;self.focus_layout();self.overlay_pix=None;self.brush_last=None;self.cursor=None;self.data=None;self.pix=None;self.rect=None;self.anchor=None;self.original=False
+            self.title.set_text(path.name);self.show_status('Loading…');self.area.queue_draw()
+            self.work(lambda:read(path),self.loaded)
+        def loaded(self,data):
+            self.data=data;self.original_data=data
+            for name,slider in self.sliders.items():slider.set_value(100 if name=='Zoom' else 0)
+            self.active=0;self.highlight()
+            if self.crop_mode:self.ensure_crop()
+            self.focus_layout();self.render();self.area.grab_focus()
+        def schedule(self,*_):
+            if self.timer:GLib.source_remove(self.timer)
+            self.timer=GLib.timeout_add(80,self.render)
+        def render(self):
+            if self.timer:GLib.source_remove(self.timer);self.timer=None
+            if self.busy or self.data is None:return False
+            im=self.original_data[1] if self.original else self.data[1];mask=self.mask
+            if not self.original:
+                if self.settings().get('Portrait blur',0)>0 and mask is None:
+                    self.mask=Image.new('L',self.data[1].size,255);mask=self.mask
+                if self.rect and not self.crop_mode and not self.brush_mode:
+                    x,y,w,h=self.rect;sx=im.width/self.data[0].width;sy=im.height/self.data[0].height
+                    im=im.crop((round(x*sx),round(y*sy),max(round(x*sx)+1,round((x+w)*sx)),max(round(y*sy)+1,round((y+h)*sy))))
+                    if mask is not None:mask=mask.crop((round(x*sx),round(y*sy),max(round(x*sx)+1,round((x+w)*sx)),max(round(y*sy)+1,round((y+h)*sy))))
+                im=portrait_blur(enhance(im,self.settings()),mask,self.settings().get('Portrait blur',0))
+            im=im.convert('RGBA');self.pix=GdkPixbuf.Pixbuf.new_from_bytes(GLib.Bytes.new(im.tobytes()),GdkPixbuf.Colorspace.RGB,True,8,im.width,im.height,im.width*4)
+            self.status.set_visible(False)
+            self.title.set_text(self.path.name+(' · Original' if self.original else ''))
+            if self.brush_mode:self.refresh_overlay()
+            self.area.queue_draw();return False
+        def transform(self,width=None,height=None):
+            width=width or self.area.get_width();height=height or self.area.get_height()
+            scale=min(width/self.pix.get_width(),height/self.pix.get_height())
+            if not self.brush_mode and not self.crop_mode:
+                scale*=self.sliders['Zoom'].get_value()/100
+                cx,cy=self.view_center
+                ox=min(0,max(width-self.pix.get_width()*scale,width/2-cx*self.pix.get_width()*scale)) if self.pix.get_width()*scale>width else (width-self.pix.get_width()*scale)/2
+                oy=min(0,max(height-self.pix.get_height()*scale,height/2-cy*self.pix.get_height()*scale)) if self.pix.get_height()*scale>height else (height-self.pix.get_height()*scale)/2
+                return scale,ox,oy
+            if self.brush_mode and self.zoom:
+                px,py,anchorx,anchory=self.zoom;scale*=3
+                ox=min(0,max(width-self.pix.get_width()*scale,anchorx-px*scale))
+                oy=min(0,max(height-self.pix.get_height()*scale,anchory-py*scale))
+                return scale,ox,oy
+            return scale,(width-self.pix.get_width()*scale)/2,(height-self.pix.get_height()*scale)/2
+        def draw(self,area,cr,width,height):
+            cr.set_source_rgb(.09,.09,.09);cr.paint()
+            if not self.pix:return
+            scale,ox,oy=self.transform(width,height);cr.save();cr.translate(ox,oy);cr.scale(scale,scale);Gdk.cairo_set_source_pixbuf(cr,self.pix,0,0);cr.paint();cr.restore()
+            if self.brush_mode and not self.original:
+                if self.overlay and self.overlay_pix:
+                    cr.save();cr.translate(ox,oy);cr.scale(scale,scale);Gdk.cairo_set_source_pixbuf(cr,self.overlay_pix,0,0);cr.paint();cr.restore()
+                if self.cursor:
+                    x,y=self.cursor;cr.set_line_width(1.5);cr.set_source_rgb(1,1,1);cr.arc(x,y,self.brush_radius*scale,0,6.283185);cr.stroke()
+            if self.crop_mode and self.rect:self.crop_info.set_text(f'Crop: {self.rect[2]} × {self.rect[3]} pixels'+(' · FAST' if self.fast_crop else ''))
+            if self.crop_mode and self.rect and not self.original:
+                x,y,w,h=self.rect;sx=self.pix.get_width()*scale/self.data[0].width;sy=self.pix.get_height()*scale/self.data[0].height
+                x=ox+x*sx;y=oy+y*sy;w*=sx;h*=sy
+                cr.set_source_rgba(1,.75,.35,1);cr.set_line_width(2);cr.rectangle(x,y,w,h);cr.stroke()
+                cr.set_line_width(1);cr.set_source_rgba(1,1,1,.5)
+                for f in (1/3,2/3):cr.move_to(x+w*f,y);cr.line_to(x+w*f,y+h);cr.move_to(x,y+h*f);cr.line_to(x+w,y+h*f)
+                cr.stroke()
+        def point(self,x,y):
+            scale,ox,oy=self.transform();iw,ih=self.data[0].size
+            return max(0,min(iw,round((x-ox)*iw/(self.pix.get_width()*scale)))),max(0,min(ih,round((y-oy)*ih/(self.pix.get_height()*scale))))
+        def begin(self,gesture,x,y):
+            if not self.busy and self.pix and not self.crop_mode and not self.brush_mode and self.sliders['Zoom'].get_value()>100:
+                scale,ox,oy=self.transform();self.pan_origin=(ox,oy,scale);return
+            if self.brush_mode:
+                if self.busy or not self.pix or self.original:return
+                point=self.brush_point(x,y)
+                if point is None:return
+                self.remember_mask();self.drag_origin=x,y;self.brush_last=point;self.area.grab_focus()
+                self.stroke(gesture,point);return
+            if self.busy or not self.pix or not self.crop_mode or self.original:return
+            self.drag_origin=x,y;self.anchor=self.point(x,y);self.area.grab_focus()
+        def drag(self,gesture,dx,dy):
+            if self.pan_origin is not None and not self.busy:
+                ox,oy,scale=self.pan_origin
+                self.view_center=(max(0,min(1,(self.area.get_width()/2-ox-dx)/(self.pix.get_width()*scale))),max(0,min(1,(self.area.get_height()/2-oy-dy)/(self.pix.get_height()*scale))))
+                self.area.queue_draw();return
+            if self.brush_mode:
+                if self.busy or self.brush_last is None or self.original:return
+                point=self.brush_point(self.drag_origin[0]+dx,self.drag_origin[1]+dy,clamp=True)
+                if point is not None:self.stroke(gesture,point)
+                return
+            if self.busy or not self.anchor or not self.crop_mode or self.original:return
+            ax,ay=self.anchor;bx,by=self.point(self.drag_origin[0]+dx,self.drag_origin[1]+dy)
+            self.rect=(min(ax,bx),min(ay,by),abs(bx-ax),abs(by-ay)) if ax!=bx and ay!=by else None;self.area.queue_draw()
+        def ensure_crop(self):
+            if self.data is not None and self.rect is None:
+                iw,ih=self.data[0].size
+                x,y=iw//20,ih//20
+                self.rect=(x,y,max(1,iw-2*x),max(1,ih-2*y))
+        def transform_menu(self,button):
+            popover=Gtk.Popover();popover.set_parent(button);items=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=4);popover.set_child(items)
+            for title,action in [('Rotate right [t]',lambda:self.rotate(True)),('Rotate left [T]',lambda:self.rotate(False)),('Mirror left/right [x]',lambda:self.mirror(True)),('Mirror top/bottom [X]',lambda:self.mirror(False))]:
+                item=Gtk.Button(label=title);item.connect('clicked',lambda _,action=action:(action(),popover.popdown()));items.append(item)
+            popover.connect('closed',lambda p:p.unparent());popover.popup()
+        def mirror(self,horizontal=True):
+            if self.busy or self.data is None:return
+            self.release_zoom();self.brush_last=None;self.pan_origin=None;self.show_status('Mirroring…')
+            self.work(lambda:mirror_data(self.data,self.rect,self.mask,self.history,horizontal),self.rotated)
+        def rotate(self,clockwise=True):
+            if self.busy or self.data is None:return
+            self.release_zoom();self.brush_last=None;self.pan_origin=None;self.show_status('Rotating…')
+            self.work(lambda:rotate_data(self.data,self.rect,self.mask,self.history,clockwise),self.rotated)
+        def rotated(self,result):
+            self.data,self.rect,self.mask,self.history=result
+            self.original=False;self.view_center=(.5,.5);self.anchor=None;self.render()
+        def toggle_crop(self,*_):
+            if self.busy:return
+            self.brush_mode=False;self.brush_last=None
+            self.crop_mode=not self.crop_mode;self.original=False;self.anchor=None
+            if self.crop_mode:self.ensure_crop()
+            self.focus_layout();self.render()
+        def toggle_brush(self,*_):
+            if self.busy or self.data is None:return
+            self.brush_mode=not self.brush_mode;self.crop_mode=False;self.original=False;self.brush_last=None
+            self.focus_layout()
+            if self.mask is None:self.mask=Image.new('L',self.data[1].size,255)
+            if self.brush_mode and self.sliders['Portrait blur'].get_value()==0:self.sliders['Portrait blur'].set_value(50)
+            self.render()
+        def reset_crop(self,*_):
+            if self.busy or self.data is None:return
+            iw,ih=self.data[0].size;self.rect=(0,0,iw,ih);self.area.queue_draw()
+        def focus_layout(self):
+            self.release_zoom();focused=self.brush_mode or self.crop_mode
+            self.brush_tools.set_visible(self.brush_mode);self.crop_tools.set_visible(self.crop_mode)
+            for widget in (self.header,self.controls):widget.set_visible(not focused)
+            self.status.set_visible(False)
+            self.footer.set_visible(True)
+            if self.crop_mode:
+                self.footer.set_text('CROP · h/j/k/l: move · Shift: resize · f: fast · Ctrl: precise · z/Z: shrink/grow · r: full image · Enter/Esc: done')
+            elif self.brush_mode:
+                self.footer.set_text('BLUR · j/k: brush size · h/l: strength · Shift-drag: erase · Space: zoom · u: undo · m: overlay · Enter/Esc: done')
+            else:
+                self.footer.set_text('j/k select · h/l adjust · 0 reset · c crop · b blur · v compare · t/T rotate · x/X mirror · s save · ? keys')
+            if focused and not self.focused:
+                self.was_fullscreen=self.win.is_fullscreen();self.win.fullscreen()
+            elif not focused and self.focused and not self.was_fullscreen:self.win.unfullscreen()
+            self.focused=focused
+        def start_zoom(self):
+            if self.zoom or not self.pix or self.brush_last is not None:return
+            x,y=self.cursor or (self.area.get_width()/2,self.area.get_height()/2)
+            point=self.brush_point(x,y,clamp=True)
+            if point is not None:self.zoom=(*point,x,y);self.area.queue_draw()
+        def release_zoom(self):
+            if self.zoom is not None:
+                self.zoom=None;self.brush_last=None;self.area.queue_draw()
+        def key_released(self,controller,key,code,state):
+            if key==Gdk.KEY_space:self.release_zoom()
+        def resize_brush(self,radius):
+            self.brush_radius=radius;self.area.queue_draw()
+        def remember_mask(self):
+            self.history.append(self.mask.copy() if self.mask is not None else Image.new('L',self.data[1].size,255))
+            self.history=self.history[-20:]
+        def undo_mask(self,*_):
+            if self.busy or not self.history:return
+            self.mask=self.history.pop();self.render()
+        def clear_mask(self,*_):
+            if self.busy or self.data is None:return
+            self.remember_mask();self.mask=Image.new('L',self.data[1].size,255);self.render()
+        def toggle_overlay(self,*_):
+            self.overlay=not self.overlay;self.area.queue_draw()
+        def refresh_overlay(self):
+            if self.mask is None:self.overlay_pix=None;return
+            a=np.zeros((self.mask.height,self.mask.width,4),dtype=np.uint8);a[:,:,:3]=(255,65,80)
+            a[:,:,3]=np.rint((255-np.asarray(self.mask,dtype=np.float32))*.42).astype(np.uint8)
+            self.overlay_pix=GdkPixbuf.Pixbuf.new_from_bytes(GLib.Bytes.new(a.tobytes()),GdkPixbuf.Colorspace.RGB,True,8,self.mask.width,self.mask.height,self.mask.width*4)
+        def brush_point(self,x,y,clamp=False):
+            scale,ox,oy=self.transform();x=(x-ox)/scale;y=(y-oy)/scale
+            if not clamp and not (0<=x<self.mask.width and 0<=y<self.mask.height):return None
+            return max(0,min(self.mask.width-1,x)),max(0,min(self.mask.height-1,y))
+        def stroke(self,gesture,point):
+            state=gesture.get_current_event_state() if gesture is not None else Gdk.ModifierType(0)
+            paint_mask(self.mask,self.brush_last,point,self.brush_radius,bool(state&Gdk.ModifierType.SHIFT_MASK))
+            self.brush_last=point;self.refresh_overlay();self.area.queue_draw()
+        def end_drag(self,*_):
+            self.pan_origin=None
+            if self.brush_mode and self.brush_last is not None:
+                self.brush_last=None;self.render()
+        def motion(self,controller,x,y):
+            if self.brush_mode:self.cursor=(x,y);self.area.queue_draw()
+        def leave(self,*_):
+            self.cursor=None;self.area.queue_draw()
+        def toggle_before(self,*_):
+            if self.busy:return
+            self.original=not self.original;self.render()
+        def key(self,controller,key,code,state):
+            if self.busy:return True
+            shift=bool(state&Gdk.ModifierType.SHIFT_MASK);ctrl=bool(state&Gdk.ModifierType.CONTROL_MASK);lower=Gdk.keyval_to_lower(key)
+            if lower==Gdk.KEY_t:self.rotate(not shift);return True
+            if lower==Gdk.KEY_x:self.mirror(not shift);return True
+            if key==Gdk.KEY_question:self.help();return True
+            if lower==Gdk.KEY_q or key==Gdk.KEY_Escape:
+                if key==Gdk.KEY_Escape and self.brush_mode:self.toggle_brush()
+                elif key==Gdk.KEY_Escape and self.crop_mode:self.toggle_crop()
+                else:self.win.close()
+                return True
+            if lower==Gdk.KEY_b:self.toggle_brush();return True
+            if self.brush_mode:
+                if key==Gdk.KEY_space:self.start_zoom();return True
+                if lower in (Gdk.KEY_h,Gdk.KEY_l):
+                    self.brush_amount.set_value(self.brush_amount.get_value()+(1 if lower==Gdk.KEY_l else -1)*(10 if shift else 1));return True
+                if lower in (Gdk.KEY_j,Gdk.KEY_k):
+                    self.brush_size.set_value(self.brush_size.get_value()+(2 if lower==Gdk.KEY_k else -2));return True
+                if key==Gdk.KEY_0:self.brush_amount.set_value(0);return True
+                if key in (Gdk.KEY_bracketleft,Gdk.KEY_bracketright):
+                    self.brush_size.set_value(self.brush_size.get_value()*(1.2 if key==Gdk.KEY_bracketright else 1/1.2));return True
+                if lower==Gdk.KEY_u or (ctrl and lower==Gdk.KEY_z):self.undo_mask();return True
+                if lower==Gdk.KEY_m:self.toggle_overlay();return True
+                if lower==Gdk.KEY_r:self.clear_mask();return True
+                if key in (Gdk.KEY_Return,Gdk.KEY_KP_Enter):self.toggle_brush();return True
+            if lower==Gdk.KEY_v:self.toggle_before();return True
+            if lower==Gdk.KEY_c:self.toggle_crop();return True
+            if lower==Gdk.KEY_s:self.save_clicked();return True
+            if lower==Gdk.KEY_o:self.choose();return True
+            if lower==Gdk.KEY_n or key==Gdk.KEY_bracketright:self.next();return True
+            if self.data is None:return False
+            if self.crop_mode:
+                if key in (Gdk.KEY_Return,Gdk.KEY_KP_Enter):self.toggle_crop();return True
+                if lower==Gdk.KEY_r:self.reset_crop();return True
+                self.ensure_crop()
+                iw,ih=self.data[0].size
+                if lower==Gdk.KEY_f:
+                    self.fast_crop=not self.fast_crop;self.render();return True
+                fraction=.05 if self.fast_crop else .01
+                stepx=1 if ctrl else max(1,round(iw*fraction))
+                stepy=1 if ctrl else max(1,round(ih*fraction))
+                if key in (Gdk.KEY_plus,Gdk.KEY_equal,Gdk.KEY_minus,Gdk.KEY_KP_Add,Gdk.KEY_KP_Subtract) or lower==Gdk.KEY_z:
+                    x,y,w,h=self.rect;direction=-1 if key in (Gdk.KEY_minus,Gdk.KEY_KP_Subtract) or (lower==Gdk.KEY_z and not shift) else 1
+                    nw=max(1,min(iw,w+direction*2*stepx));nh=max(1,min(ih,h+direction*2*stepy))
+                    x=max(0,min(iw-nw,x+(w-nw)//2));y=max(0,min(ih-nh,y+(h-nh)//2))
+                    self.rect=x,y,nw,nh
+                    if self.original:self.original=False;self.render()
+                    else:self.area.queue_draw()
+                    return True
+                delta={Gdk.KEY_h:(-1,0),Gdk.KEY_Left:(-1,0),Gdk.KEY_l:(1,0),Gdk.KEY_Right:(1,0),Gdk.KEY_j:(0,1),Gdk.KEY_Down:(0,1),Gdk.KEY_k:(0,-1),Gdk.KEY_Up:(0,-1)}.get(lower)
+                if delta and self.rect:
+                    x,y,w,h=self.rect;dx,dy=delta[0]*stepx,delta[1]*stepy
+                    if shift:w=max(1,min(iw-x,w+dx));h=max(1,min(ih-y,h+dy))
+                    else:x=max(0,min(iw-w,x+dx));y=max(0,min(ih-h,y+dy))
+                    self.rect=x,y,w,h
+                    # Only the selection changed: avoid reprocessing image pixels per key.
+                    if self.original:self.original=False;self.render()
+                    else:self.area.queue_draw()
+                    return True
+                return bool(delta)
+            if lower in (Gdk.KEY_j,Gdk.KEY_Down,Gdk.KEY_k,Gdk.KEY_Up):
+                self.active=(self.active+(1 if lower in (Gdk.KEY_j,Gdk.KEY_Down) else -1))%len(UI_CONTROLS);self.highlight();return True
+            if lower==Gdk.KEY_g:self.active=len(UI_CONTROLS)-1 if shift else 0;self.highlight();return True
+            slider=self.sliders[UI_CONTROLS[self.active]]
+            if lower in (Gdk.KEY_h,Gdk.KEY_Left,Gdk.KEY_l,Gdk.KEY_Right):
+                slider.set_value(slider.get_value()+(1 if lower in (Gdk.KEY_l,Gdk.KEY_Right) else -1)*(10 if shift else 1));self.original=False;self.schedule();return True
+            if key==Gdk.KEY_0:slider.set_value(100 if UI_CONTROLS[self.active]=='Zoom' else 0);return True
+            if lower==Gdk.KEY_r:
+                for name,s in self.sliders.items():s.set_value(100 if name=='Zoom' else 0)
+                return True
+            return False
+        def save_clicked(self,*_):
+            if self.busy or self.data is None:return
+            settings=self.settings();rect=self.rect;self.show_status('Saving full-resolution copy…')
+            self.work(lambda:save(self.path,self.data,settings,rect,self.mask),self.saved)
+        def saved(self,p):print(p,flush=True);self.show_status('Saved '+p.name)
+    return App().run([sys.argv[0]])
+if __name__=='__main__':raise SystemExit(main(sys.argv[1:]))

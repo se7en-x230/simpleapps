@@ -46,7 +46,7 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
     for name in names:
         before={p for p in stage.rglob('*') if p.is_file()}
         src=work/name;recipe=catalog[name]['recipe'];target=share/name
-        if recipe not in ('wallpaper','tools'):
+        if recipe not in ('wallpaper','tools','photo'):
             print('\nBuilding '+catalog[name]['name']+'…',flush=True)
             subprocess.run(['make','-C',str(src),'-j2'],env=env,check=True)
         if recipe=='player':
@@ -74,6 +74,8 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
                 write(bins/'simplepanel-dashboard','#!/bin/sh\nbindir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexport PATH="$bindir:$PATH"\nexec "$bindir/simplepanel" --system-dashboard "$@"\n',0o755)
             if recipe=='lock':put(src/'lock.toml',target/'lock.toml')
             if recipe=='torrent':shutil.copytree(src/'defaults',target/'defaults')
+        elif recipe=='photo':
+            put(src/'simplephoto',bins/'simplephoto',0o755)
         elif recipe=='wallpaper':
             for filename in ('main.py','README.md'):put(src/filename,target/filename)
             shell_launcher(src/'launcher',bins/name)
@@ -93,9 +95,10 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
             shutil.copytree(work/'simplepicker/python',share/'simplepicker/python',dirs_exist_ok=True,ignore=source_ignore)
         else:raise ValueError('Unknown install recipe: '+recipe)
         command={'simplepanel':'simplepanel-dashboard','simple-tools':'simple-sound'}.get(name,name)
-        desktop(share/'applications'/(name+'.desktop'),catalog[name]['name'],command)
+        desktop(share/'applications'/(name+'.desktop'),catalog[name]['name'],command+' %F' if recipe=='photo' else command,category='Graphics;Photography' if recipe=='photo' else 'Utility')
         for p in stage.rglob('*'):
             if p.is_file() and p not in before:owners[p]={name}
+    if set(names)=={'simplephoto'}:return owners
     before={p for p in stage.rglob('*') if p.is_file()}
     for p in (root/'simple-common').glob('*.py'):put(p,share/'simple-common'/p.name)
     for p in (root/'simple-common/assets/images').glob('*.png'):put(p,share/'simple/images'/p.name)
@@ -104,7 +107,7 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
 
     for p in stage.rglob('*'):
         if not p.is_file():continue
-        if p not in before:owners[p]=set(names)
+        if p not in before:owners[p]=set(names)-{'simplephoto'}
         rel=p.relative_to(stage).parts
         if (rel[:3] in (('.local','share','simplepicker'),('.local','lib','simplepicker')) or p==bins/'simplepicker-native'):
             owners[p]=set(names)&{'simplepicker','simple-tools'}

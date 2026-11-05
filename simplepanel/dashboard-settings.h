@@ -15,5 +15,6 @@ gboolean dashboard_settings_load(GKeyFile *file,GError **error);
 void simple_market_refresh(void);
 json_object *simple_market_read(void);
 char *simple_market_price(json_object *prices,int index);
+char *simple_market_number(json_object *prices,int index);
 void simple_market_stop(void);
 #endif

@@ -9,6 +9,7 @@ Each app page explains what it does, shows a screenshot and lists installation, 
 | App | What it does |
 | --- | --- |
 | [Simplepicker](docs/simplepicker.md) | Application launcher, search and keyboard menus |
+| [SimplePhoto](docs/simplephoto.md) | Photo adjustments, cropping and Vim-style controls |
 | [Simpleplayer](docs/simpleplayer.md) | Music library, artwork and mpv playback |
 | [Simplecalendar](docs/simplecalendar.md) | Calendar, recurring events and CalDAV sync |
 | [Simplecontacts](docs/simplecontacts.md) | Google contacts with an offline local copy |

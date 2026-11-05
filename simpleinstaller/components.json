@@ -479,6 +479,36 @@
       "source_files": [
         "launchers/simple-sound"
       ]
+    },
+    "simplephoto": {
+      "name": "SimplePhoto",
+      "description": "Compact photo adjustments and cropping with Vim keys",
+      "build": [],
+      "runtime": [
+        "python",
+        "python-gobject",
+        "python-cairo",
+        "python-pillow",
+        "python-numpy",
+        "gtk4"
+      ],
+      "modules": [],
+      "commands": [
+        "python3"
+      ],
+      "imports": [
+        "gi",
+        "cairo",
+        "PIL",
+        "numpy"
+      ],
+      "optional": {},
+      "recipe": "photo",
+      "compatibility": "GTK desktop; local SDR editing",
+      "source_files": [
+        "simplephoto",
+        "README.md"
+      ]
     }
   }
 }

@@ -426,7 +426,7 @@ static gboolean tick(gpointer unused) {
     if(demo)return G_SOURCE_CONTINUE;
     if(enable_invest&&!g_getenv("SIMPLEPANEL_INVEST_COMMAND")) {
         simple_market_refresh();json_object *prices=simple_market_read();GString *summary=g_string_new(NULL);
-        for(gsize i=0;i<dashboard_settings.markets;i++){char *price=simple_market_price(prices,i);g_string_append_printf(summary,"%s%s %s",i?" · ":"",dashboard_settings.labels[i],price);g_free(price);}
+        for(gsize i=0;i<dashboard_settings.markets;i++){char *price=simple_market_number(prices,i);g_string_append_printf(summary,"%s%s",i?" ":"",price);g_free(price);}
         set_text(invest_label,summary->str);g_string_free(summary,TRUE);if(prices)json_object_put(prices);
     }
     static char *last_iface;

@@ -72,12 +72,16 @@ static gboolean valid_prices(json_object *o) {
     return TRUE;
 }
 json_object *simple_market_read(void) {return cache_path?json_object_from_file(cache_path):NULL;}
-char *simple_market_price(json_object *prices,int index) {
+static char *market_text(json_object *prices,int index,gboolean labelled) {
     json_object *coin=NULL,*price=NULL;
     if(prices)json_object_object_get_ex(prices,dashboard_settings.ids[index],&coin);
     if(coin)json_object_object_get_ex(coin,dashboard_settings.currency,&price);
-    return numeric(price)&&json_object_get_double(price)>0?g_strdup_printf("%.*f %s",dashboard_settings.decimals,json_object_get_double(price),dashboard_settings.currency_label):g_strdup("Price unavailable");
+    if(!numeric(price)||json_object_get_double(price)<=0)return g_strdup(labelled?"Price unavailable":"--");
+    return labelled?g_strdup_printf("%.*f %s",dashboard_settings.decimals,json_object_get_double(price),dashboard_settings.currency_label):g_strdup_printf("%.*f",dashboard_settings.decimals,json_object_get_double(price));
 }
+char *simple_market_price(json_object *prices,int index) {return market_text(prices,index,TRUE);}
+char *simple_market_number(json_object *prices,int index) {return market_text(prices,index,FALSE);}
+
 static void received(GObject *source,GAsyncResult *result,gpointer data) {
     char *out=NULL;GError *error=NULL;
     if(g_subprocess_communicate_utf8_finish(G_SUBPROCESS(source),result,&out,NULL,&error)&&g_subprocess_get_successful(G_SUBPROCESS(source))) {
