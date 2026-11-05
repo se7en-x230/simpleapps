@@ -8,6 +8,11 @@ All apps support Vim-style key bindings, and almost every function can be used f
 
 Click a screenshot or app name for features, installation and keyboard controls.
 
+| [Simplelock](docs/simplelock.md) | [Simplewallpaper](docs/simplewallpaper.md) |
+| :---: | :---: |
+| [![Simplelock screenshot](docs/screenshots/simplelock.png)](docs/simplelock.md) | [![Simplewallpaper screenshot](docs/screenshots/simplewallpaper-matrix-afternoon.png)](docs/simplewallpaper.md) |
+| Wayland session lock with music and calendar | Static and sunrise-aware Wayland wallpaper |
+
 | [SimplePhoto](docs/simplephoto.md) | [Simpleplayer](docs/simpleplayer.md) |
 | :---: | :---: |
 | [![SimplePhoto screenshot](docs/screenshots/simplephoto-landscape.png)](docs/simplephoto.md) | [![Simpleplayer screenshot](docs/screenshots/simpleplayer.png)](docs/simpleplayer.md) |
@@ -32,11 +37,6 @@ Click a screenshot or app name for features, installation and keyboard controls.
 | :---: | :---: |
 | [![Simpletorrent screenshot](docs/screenshots/simpletorrent.png)](docs/simpletorrent.md) | [![Simple tools screenshot](docs/screenshots/simple-tools.png)](docs/simple-tools.md) |
 | Transmission download controls | Sound, network, disks, displays and services |
-
-| [Simplewallpaper](docs/simplewallpaper.md) | [Simplelock](docs/simplelock.md) |
-| :---: | :---: |
-| [![Simplewallpaper screenshot](docs/screenshots/simplewallpaper.png)](docs/simplewallpaper.md) | [![Simplelock screenshot](docs/screenshots/simplelock.png)](docs/simplelock.md) |
-| Static and sunrise-aware Wayland wallpaper | Wayland session lock with music and calendar |
 
 ## Install from this checkout
 

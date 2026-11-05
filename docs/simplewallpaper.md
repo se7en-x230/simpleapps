@@ -2,7 +2,7 @@
 
 Choose a static wallpaper or a set of still images that changes with daylight. Configure your own location for sunrise/sunset scheduling. Optional theme packs are separate downloads; you can also use your own images.
 
-![Simplewallpaper screenshot](screenshots/simplewallpaper.png)
+![Simplewallpaper screenshot](screenshots/simplewallpaper-matrix-afternoon.png)
 
 Screenshot captured in an isolated profile; no personal accounts are connected.
 
