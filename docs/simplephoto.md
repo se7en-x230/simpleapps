@@ -2,7 +2,7 @@
 
 Quick local photo edits with compact controls and a large image preview. Adjust brightness, contrast, highlights, shadows, saturation, vibrance, warmth and tint; crop in the same window and save a separate numbered copy.
 
-![SimplePhoto image view and two rows of sliders](screenshots/simplephoto.png)
+![SimplePhoto image view and two rows of sliders](screenshots/simplephoto-landscape.png)
 
 ```sh
 ./install --install simplephoto
@@ -20,7 +20,7 @@ See [controls and export details](../simplephoto/README.md).
 
 Press `b` for the fullscreen manual blur brush. Paint areas to blur; hold Shift to deselect. Hold Space for 3× zoom at the pointer. Only brush size and blur strength are shown. `[` / `]` changes size, `m` toggles the overlay, `u` undoes, and Enter returns to the editor. Press `v` to compare original and edited. AI detection is not included.
 
-![Dedicated manual blur view](screenshots/simplephoto-blur.png)
+![Dedicated manual blur view](screenshots/simplephoto-blur-landscape.png)
 
 The main editor has two rows of five sliders, including view-only Zoom (100–400% of fit). Drag to pan when zoomed. Crop and blur each hide the adjustment controls and show their own key-help line.
 
