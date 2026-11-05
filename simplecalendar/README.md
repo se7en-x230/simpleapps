@@ -39,3 +39,5 @@ Keyboard: n or Ctrl+N creates an event; e edits; Ctrl+S saves from any editor fi
 The no-event image follows the shared daylight wallpaper portrait used by the idle dashboard and lockscreen. It refreshes while the calendar remains open, with the bundled image as fallback when wallpaper art is unavailable.
 
 The no-event card uses the full current wallpaper with edge-to-edge cover scaling, cropping without distortion. Idle dashboard and lockscreen portrait framing stays unchanged.
+
+Optional report UI: `simple-calendar --show-90-day-report`. Hidden by default; existing events and reminders are preserved.

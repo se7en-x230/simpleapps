@@ -18,17 +18,16 @@
 #include <pwd.h>
 #include <unistd.h>
 #include <json-c/json.h>
+#include "dashboard-settings.h"
 
 static GtkApplication *application;
-static GtkWidget *popup,*clocks[4],*cpu,*memory,*disk,*network,*volume,*bluetooth,*battery,*uptime,*phone_label,*market_prices[2],*market_trends[2];
+static GtkWidget *popup,*clocks[SIMPLE_MAX_CARDS],*cpu,*memory,*disk,*network,*volume,*bluetooth,*battery,*uptime,*phone_label,*market_prices[SIMPLE_MAX_CARDS],*market_trends[SIMPLE_MAX_CARDS];
 static GtkWidget *control_cards[9];
 static GDBusConnection *bus;
 static gboolean phone_busy;
 static PhoneChargeEstimate phone_estimate;
 static char *phone_device;
-static const char *zones[]={"Asia/Bangkok","Australia/Sydney","Europe/Berlin","America/Los_Angeles"};
-static const char *cities[]={"Koh Tao","Sydney","Berlin","Los Angeles"};
-static GTimeZone *timezones[4];
+static GTimeZone *timezones[SIMPLE_MAX_CARDS];
 static GCancellable *cancel;
 static pa_glib_mainloop *pulse_loop;
 static pa_context *pulse;
@@ -283,9 +282,9 @@ static void update_network(void) {
 }
 static gboolean tick(gpointer data) {
     GDateTime *now=g_date_time_new_now_utc();
-    for(int i=0;i<4;i++) {
+    for(gsize i=0;i<dashboard_settings.clocks;i++) {
         GDateTime *local=g_date_time_to_timezone(now,timezones[i]);
-        char *value=g_date_time_format(local,"%H:%M\n%a %d %b · %Z");set(clocks[i],value);
+        char *value=g_date_time_format(local,dashboard_settings.format);set(clocks[i],value);
         g_free(value);g_date_time_unref(local);
     }
     g_date_time_unref(now);
@@ -344,40 +343,25 @@ static gboolean tick(gpointer data) {
         guint64 seconds=(guint64)g_ascii_strtod(raw,NULL);char *value=g_strdup_printf("%llu days · %llu hours · %llu minutes",(unsigned long long)(seconds/86400),(unsigned long long)(seconds/3600%24),(unsigned long long)(seconds/60%60));
         set(uptime,value);g_free(value);g_free(raw);
     }
-    char *path=g_build_filename(g_get_user_cache_dir(),"invest/market.json",NULL);
-    json_object *prices=json_object_from_file(path);g_free(path);
-    const char *ids[]={"tether-gold","bitcoin"};
-    for(int i=0;i<2;i++) {
-        json_object *coin=NULL,*price=NULL,*change=NULL,*stamp=NULL;
-        if(prices)json_object_object_get_ex(prices,ids[i],&coin);
-        if(coin)json_object_object_get_ex(coin,"thb",&price);
-        if(coin)json_object_object_get_ex(coin,"thb_24h_change",&change);
-        if(coin)json_object_object_get_ex(coin,"last_updated_at",&stamp);
-        if(price&&json_object_get_double(price)>0) {
-            char *value=g_strdup_printf("%.0f THB",json_object_get_double(price));set(market_prices[i],value);g_free(value);
-        } else set(market_prices[i],"Price unavailable");
-        gtk_widget_remove_css_class(market_trends[i],"gain");gtk_widget_remove_css_class(market_trends[i],"loss");
-        if(change&&(json_object_is_type(change,json_type_double)||json_object_is_type(change,json_type_int))&&isfinite(json_object_get_double(change))) {
-            double delta=json_object_get_double(change);
-            char *value=g_strdup_printf("%s %+.2f%% · 24h",delta>0?"↑":delta<0?"↓":"→",delta);
-            set(market_trends[i],value);g_free(value);
-            gtk_widget_add_css_class(market_trends[i],delta>=0?"gain":"loss");
-        } else set(market_trends[i],"24h change unavailable");
-        GDateTime *updated=stamp?g_date_time_new_from_unix_local(json_object_get_int64(stamp)):NULL;
-        char *date=updated?g_date_time_format(updated,"%d %b %H:%M"):g_strdup("unknown time");
-        char *tooltip=g_strdup_printf("Cached CoinGecko quote · updated %s",date);
-        gtk_widget_set_tooltip_text(market_prices[i],tooltip);gtk_widget_set_tooltip_text(market_trends[i],tooltip);
-        g_free(tooltip);g_free(date);if(updated)g_date_time_unref(updated);
-    }
-    if(prices)json_object_put(prices);
-    else {
-        char *fallback=g_build_filename(g_get_user_cache_dir(),"invest/prices",NULL),*raw=NULL;
-        unsigned long long gold,btc;
-        if(g_file_get_contents(fallback,&raw,NULL,NULL)&&sscanf(raw,"%llu %llu",&gold,&btc)==2) {
-            char *a=g_strdup_printf("%llu THB · cached",gold),*b=g_strdup_printf("%llu THB · cached",btc);
-            set(market_prices[0],a);set(market_prices[1],b);g_free(a);g_free(b);
+    if(dashboard_settings.show_markets) {
+        simple_market_refresh();json_object *prices=simple_market_read();
+        char *change_key=g_strconcat(dashboard_settings.currency,"_24h_change",NULL);
+        for(gsize i=0;i<dashboard_settings.markets;i++) {
+            char *value=simple_market_price(prices,i);set(market_prices[i],value);g_free(value);
+            json_object *coin=NULL,*change=NULL,*stamp=NULL;
+            if(prices)json_object_object_get_ex(prices,dashboard_settings.ids[i],&coin);
+            if(coin){json_object_object_get_ex(coin,change_key,&change);json_object_object_get_ex(coin,"last_updated_at",&stamp);}
+            gtk_widget_remove_css_class(market_trends[i],"gain");gtk_widget_remove_css_class(market_trends[i],"loss");
+            if(change&&(json_object_is_type(change,json_type_double)||json_object_is_type(change,json_type_int))&&isfinite(json_object_get_double(change))) {
+                double delta=json_object_get_double(change);value=g_strdup_printf("%+.2f%% · 24h",delta);set(market_trends[i],value);g_free(value);
+                gtk_widget_add_css_class(market_trends[i],delta>=0?"gain":"loss");
+            }else set(market_trends[i],"24h change unavailable");
+            GDateTime *updated=stamp?g_date_time_new_from_unix_local(json_object_get_int64(stamp)):NULL;
+            char *date=updated?g_date_time_format(updated,"%d %b %H:%M"):g_strdup("unknown time");
+            char *tooltip=g_strdup_printf("Cached CoinGecko quote · updated %s",date);
+            gtk_widget_set_tooltip_text(market_prices[i],tooltip);g_free(tooltip);g_free(date);if(updated)g_date_time_unref(updated);
         }
-        g_free(raw);g_free(fallback);
+        g_free(change_key);if(prices)json_object_put(prices);
     }
     update_network();return G_SOURCE_CONTINUE;
 }
@@ -526,18 +510,19 @@ static void activate_dashboard(GtkApplication *app,gpointer data) {
     gtk_box_append(GTK_BOX(body),system_facts());
     GtkSizeGroup *summary_size=gtk_size_group_new(GTK_SIZE_GROUP_VERTICAL);
     GtkWidget *row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,12);gtk_box_set_homogeneous(GTK_BOX(row),TRUE);
-    for(int i=0;i<4;i++){GtkWidget *c=card(cities[i],&clocks[i]);gtk_widget_add_css_class(clocks[i],"world-time");gtk_size_group_add_widget(summary_size,c);gtk_box_append(GTK_BOX(row),c);}
+    for(gsize i=0;i<dashboard_settings.clocks;i++){GtkWidget *c=card(dashboard_settings.cities[i],&clocks[i]);gtk_widget_add_css_class(clocks[i],"world-time");gtk_size_group_add_widget(summary_size,c);gtk_box_append(GTK_BOX(row),c);}
     gtk_box_append(GTK_BOX(body),row);
+    gtk_widget_set_visible(row,dashboard_settings.show_clocks);
     GtkWidget *market_row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,12);gtk_box_set_homogeneous(GTK_BOX(market_row),TRUE);
-    const char *market_titles[]={"GOLD · XAUT","BITCOIN · BTC"};
-    for(int i=0;i<2;i++) {
-        GtkWidget *c=card(market_titles[i],&market_prices[i]);
+    for(gsize i=0;i<dashboard_settings.markets;i++) {
+        GtkWidget *c=card(dashboard_settings.labels[i],&market_prices[i]);
         gtk_orientable_set_orientation(GTK_ORIENTABLE(c),GTK_ORIENTATION_HORIZONTAL);
         gtk_widget_add_css_class(c,"market-card");
         market_trends[i]=text("24h change unavailable","dash-info");gtk_box_append(GTK_BOX(c),market_trends[i]);
         gtk_box_append(GTK_BOX(market_row),c);
     }
     gtk_box_append(GTK_BOX(body),market_row);
+    gtk_widget_set_visible(market_row,dashboard_settings.show_markets);
     GtkWidget *grid=gtk_grid_new();gtk_grid_set_column_spacing(GTK_GRID(grid),12);gtk_grid_set_row_spacing(GTK_GRID(grid),12);gtk_grid_set_column_homogeneous(GTK_GRID(grid),TRUE);
     GtkWidget **values[]={&cpu,&memory,&disk,&network,&volume,&bluetooth,&battery,&uptime,&phone_label};const char *titles[]={"CPU","MEMORY","DISK","NETWORK","VOLUME","BLUETOOTH","BATTERY","UPTIME","PHONE"};
     for(int i=0;i<9;i++) {
@@ -582,17 +567,18 @@ int system_dashboard_main(int duration) {
     cancel=g_cancellable_new();net_previous=g_hash_table_new_full(g_str_hash,g_str_equal,g_free,g_free);
     cpu_model=g_strdup("CPU");char *raw=NULL;
     if(g_file_get_contents("/proc/cpuinfo",&raw,NULL,NULL)){char **lines=g_strsplit(raw,"\n",-1);for(int i=0;lines[i];i++)if(g_str_has_prefix(lines[i],"model name")){char *colon=strchr(lines[i],':');if(colon){g_free(cpu_model);cpu_model=g_strdup(g_strstrip(colon+1));}break;}g_strfreev(lines);g_free(raw);}
-    for(int i=0;i<4;i++)timezones[i]=g_time_zone_new_identifier(zones[i]);
+    for(gsize i=0;i<dashboard_settings.clocks;i++)timezones[i]=g_time_zone_new_identifier(dashboard_settings.zones[i]);
     application=gtk_application_new("com.go7.Simplepanel.SystemDashboard",G_APPLICATION_DEFAULT_FLAGS);
     g_signal_connect(application,"activate",G_CALLBACK(activate_dashboard),NULL);
     g_unix_signal_add(SIGTERM,quit_dashboard,NULL);g_unix_signal_add(SIGINT,quit_dashboard,NULL);
     if(duration>0)g_timeout_add_seconds(duration,quit_dashboard,NULL);
     int result=g_application_run(G_APPLICATION(application),0,NULL);
+    simple_market_stop();
     g_cancellable_cancel(cancel);if(fetch_timeout)g_source_remove(fetch_timeout);
     if(fetch_process){g_subprocess_force_exit(fetch_process);g_clear_object(&fetch_process);}
     if(timer)g_source_remove(timer);
     if(bt_timer)g_source_remove(bt_timer);
     if(pulse){pa_context_disconnect(pulse);pa_context_unref(pulse);}if(pulse_loop)pa_glib_mainloop_free(pulse_loop);
-    for(int i=0;i<4;i++)g_time_zone_unref(timezones[i]);
+    for(gsize i=0;i<dashboard_settings.clocks;i++)g_time_zone_unref(timezones[i]);
     g_hash_table_unref(net_previous);g_free(cpu_model);g_object_unref(application);g_object_unref(cancel);return result;
 }

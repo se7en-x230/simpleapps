@@ -348,7 +348,8 @@
         "python",
         "gtk4-layer-shell",
         "libpulse",
-        "fastfetch"
+        "fastfetch",
+        "curl"
       ],
       "modules": [
         "gtk4 >= 4.12",
@@ -362,7 +363,8 @@
         "make",
         "pkg-config",
         "python3",
-        "fastfetch"
+        "fastfetch",
+        "curl"
       ],
       "imports": [],
       "optional": {

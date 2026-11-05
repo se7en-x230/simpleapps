@@ -152,3 +152,8 @@ kernel, init, WM/protocol, GPU, displays and package count come from that result
 Shell is the user's configured login shell (a GUI has no enclosing terminal).
 Missing facts are marked unavailable. Volume and Bluetooth are compact stacked
 cards alongside the network graph; keyboard navigation follows their positions.
+
+Configurable clocks and quotes
+-----------------------------
+See ../docs/simplepanel.md for [dashboard], [markets], and panel clock settings.
+Defaults retain the original four cities, XAUT/BTC and THB. Market fetching is now standalone (curl), with configuration-specific caches.

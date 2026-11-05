@@ -5,10 +5,11 @@ CFLAGS += -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter
 CPPFLAGS += $(shell pkg-config --cflags $(PKGS))
 LDLIBS += $(shell pkg-config --libs $(PKGS)) -lm
 all: simplepanel
-simplepanel: panel.c system-dashboard.c
+simplepanel: panel.c system-dashboard.c dashboard-settings.c dashboard-settings.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDLIBS)
 check: simplepanel
 	./simplepanel --check
+	python3 check-config.py
 .PHONY: all check
 
 simplepanel: media.h

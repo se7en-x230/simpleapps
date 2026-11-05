@@ -3,6 +3,7 @@
 #include "simple-theme.h"
 #include <gtk/gtk.h>
 #include "media.h"
+#include "dashboard-settings.h"
 #include "phone-charge.h"
 #include "phone-charge-cache.h"
 #include <gtk4-layer-shell.h>
@@ -29,6 +30,8 @@ static GtkWidget *window,*tags,*title_label,*media_label,*music,*clock_label,*ne
 static GDBusConnection *bus;
 static GCancellable *cancel;
 static GKeyFile *config;
+static char *config_path;
+static GTimeZone *panel_timezone;
 static char *monitor_name,*clock_format,*interface_name,*selected_player,*sink_name,*cava_path;
 static gboolean preview,preview_layer,demo,stopping,media_busy,phone_busy,invest_busy,enable_cava=TRUE,enable_invest=TRUE,enable_phone=TRUE,enable_osd;
 static int duration,height=32,volume=-1,edge_margin=10,top_margin=6;
@@ -83,6 +86,7 @@ static const char *strfield(json_object *o,const char *name) {
 }
 static gboolean stop_app(gpointer unused) {
     stopping=TRUE;
+    simple_market_stop();
     g_cancellable_cancel(cancel);
     if(cava_process)g_subprocess_force_exit(cava_process);
     if(invest_process)g_subprocess_force_exit(invest_process);
@@ -185,7 +189,7 @@ static void system_clicked(GtkGestureClick *gesture,int n,double x,double y,gpoi
      * pathname with this suffix; launch the replacement at the original path. */
     if(g_str_has_suffix(binary," (deleted)"))
         binary[strlen(binary)-strlen(" (deleted)")]='\0';
-    char *argv[]={binary,"--system-dashboard",NULL};
+    char *argv[]={binary,"--system-dashboard","--config",config_path,NULL};
     GError *error=NULL;
     if(!g_spawn_async(NULL,argv,NULL,G_SPAWN_SEARCH_PATH,NULL,NULL,NULL,&error)) {
         g_warning("System dashboard failed: %s",error->message);g_clear_error(&error);
@@ -235,12 +239,14 @@ static void music_clicked(GtkGestureClick *gesture,int n,double x,double y,gpoin
 static void calendar_clicked(GtkGestureClick *gesture,int n,double x,double y,gpointer data) {
     gtk_gesture_set_state(GTK_GESTURE(gesture),GTK_EVENT_SEQUENCE_CLAIMED);
     if(demo)return;
-    char *binary=g_strdup("simple-calendar");
-    char *argv[]={binary,NULL};GError *error=NULL;
+    char *command=setting("calendar_command","simple-calendar");
+    char **argv=NULL;GError *error=NULL;
+    if(!g_shell_parse_argv(command,NULL,&argv,&error)){g_warning("Calendar command: %s",error->message);g_clear_error(&error);g_free(command);return;}
+    g_free(command);
     if(!g_spawn_async(NULL,argv,NULL,G_SPAWN_SEARCH_PATH,NULL,NULL,NULL,&error)) {
         g_warning("SimpleCalendar failed: %s",error->message);g_clear_error(&error);
     }
-    g_free(binary);
+    g_strfreev(argv);
 }
 static void clickable(GtkWidget *widget,GCallback callback) {
     GtkGesture *click=gtk_gesture_click_new();
@@ -412,12 +418,17 @@ static void rate_text(double bytes,char *out,size_t size) {
     g_snprintf(out,size,"%.1f %s",bytes,unit);
 }
 static gboolean tick(gpointer unused) {
-    GDateTime *now=g_date_time_new_now_local();
+    GDateTime *now=g_date_time_new_now(panel_timezone);
     char *text=g_date_time_format(now,clock_format);
     set_text(clock_label,text);
     g_free(text);
     g_date_time_unref(now);
     if(demo)return G_SOURCE_CONTINUE;
+    if(enable_invest&&!g_getenv("SIMPLEPANEL_INVEST_COMMAND")) {
+        simple_market_refresh();json_object *prices=simple_market_read();GString *summary=g_string_new(NULL);
+        for(gsize i=0;i<dashboard_settings.markets;i++){char *price=simple_market_price(prices,i);g_string_append_printf(summary,"%s%s %s",i?" · ":"",dashboard_settings.labels[i],price);g_free(price);}
+        set_text(invest_label,summary->str);g_string_free(summary,TRUE);if(prices)json_object_put(prices);
+    }
     static char *last_iface;
     static guint64 rx,tx;
     static gint64 last;
@@ -769,7 +780,7 @@ static void invest_result(GObject *source,GAsyncResult *result,gpointer unused) 
     invest_busy=FALSE;
 }
 static gboolean invest_update(gpointer unused) {
-    if(!enable_invest||invest_busy||stopping)return G_SOURCE_CONTINUE;
+    if(!enable_invest||invest_busy||stopping||!g_getenv("SIMPLEPANEL_INVEST_COMMAND"))return G_SOURCE_CONTINUE;
     char *script=g_getenv("SIMPLEPANEL_INVEST_COMMAND")?g_strdup(g_getenv("SIMPLEPANEL_INVEST_COMMAND")):simple_control("simple-invest","mango/scripts/invest.sh");
     GError *e=NULL;
     invest_process=g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_PIPE|G_SUBPROCESS_FLAGS_STDERR_PIPE,&e,script,NULL);
@@ -952,6 +963,7 @@ static void activate(GtkApplication *application,gpointer unused) {
     gtk_box_append(GTK_BOX(music),media_label);
     gtk_box_append(GTK_BOX(center),music);
     gtk_box_append(GTK_BOX(center),clock_label);
+    gtk_widget_set_visible(clock_label,dashboard_settings.show_panel_clock);
     net_label=label("Network…",28);
     volume_label=label("Audio…",15);
     gtk_widget_set_tooltip_text(volume_label,"Left-click: Sound · Right-click: Bluetooth · Scroll: volume ±5% · Middle-click: mute");
@@ -1105,13 +1117,16 @@ int main(int argc,char **argv) {
         return 2;
     }
     g_option_context_free(context);
-    if(system_dashboard)return system_dashboard_main(duration);
+
     config=g_key_file_new();
     if(!path)path=g_build_filename(g_get_user_config_dir(),"simplepanel/config.ini",NULL);
     if(g_file_test(path,G_FILE_TEST_EXISTS)&&!g_key_file_load_from_file(config,path,G_KEY_FILE_NONE,&error)) {
         g_printerr("%s\n",error->message);
         return 2;
     }
+    config_path=g_canonicalize_filename(path,NULL);
+    if(!dashboard_settings_load(config,&error)){g_printerr("Invalid config: %s\n",error->message);g_clear_error(&error);return 2;}
+    panel_timezone=*dashboard_settings.panel_zone?g_time_zone_new_identifier(dashboard_settings.panel_zone):g_time_zone_new_local();
     monitor_name=setting("monitor","");
     clock_format=setting("clock_format","%a %d  %H:%M");
     interface_name=setting("interface","");
@@ -1128,7 +1143,7 @@ int main(int argc,char **argv) {
         return 2;
     }
     if(check) {
-        GDateTime *now=g_date_time_new_now_local();
+        GDateTime *now=g_date_time_new_now(panel_timezone);
         char *s=g_date_time_format(now,clock_format);
         if(!s)return 2;
         g_free(s);
@@ -1142,6 +1157,7 @@ int main(int argc,char **argv) {
         g_print("Config and parser checks passed. GTK/layer-shell/Pulse/GIO linked; no services contacted.\n");
         return 0;
     }
+    if(system_dashboard)return system_dashboard_main(duration);
     if(demo||preview_layer) {
         preview=TRUE;
     }
@@ -1153,6 +1169,7 @@ int main(int argc,char **argv) {
     g_unix_signal_add(SIGINT,stop_app,NULL);
     int code=g_application_run(G_APPLICATION(app),0,NULL);
     stopping=TRUE;
+    simple_market_stop();
     g_cancellable_cancel(cancel);
     if(cava_process) {
         g_subprocess_force_exit(cava_process);

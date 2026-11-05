@@ -34,3 +34,13 @@ An individual installer also provides `./uninstall`. Uninstallation preserves pe
 [Source directory](../simplecalendar/) · [Dependency and option catalog](../simpleinstaller/components.json) · [All apps](../README.md)
 
 Runtime packages: `gtk4`, `json-c`, `python`, `python-icalendar`, `python-recurring-ical-events`, `python-requests`, `vdirsyncer`, `libnotify`, `xdg-utils`.
+
+## Optional 90-day report
+
+The report button and special red marker are hidden by default. Launch with:
+
+```sh
+simple-calendar --show-90-day-report
+```
+
+The flag also applies when a calendar window is already open. Launching without it hides the report controls again. Existing report events remain ordinary calendar events; no data or reminders are deleted.

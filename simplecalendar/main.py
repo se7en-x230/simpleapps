@@ -62,18 +62,18 @@ def watch():
             except Exception as exc:print(type(exc).__name__+': '+str(exc),flush=True)
             time.sleep(15)
 
-def gui(day):
-    os.execvp('simplecalendar-native',['simplecalendar-native','--day',day])
+def gui(day,show_report=False):
+    os.execvp('simplecalendar-native',['simplecalendar-native','--day',day]+(['--show-90-day-report'] if show_report else []))
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--day',default=date.today().isoformat());p.add_argument('--watch',action='store_true');p.add_argument('--sync',action='store_true');p.add_argument('--connect',action='store_true')
-    p.add_argument('--provider',choices=['google','caldav']);p.add_argument('--client-json');p.add_argument('--calendar-id')
+    p.add_argument('--show-90-day-report',action='store_true',help='Show the optional 90-day report button and marker');p.add_argument('--provider',choices=['google','caldav']);p.add_argument('--client-json');p.add_argument('--calendar-id')
     args=p.parse_args();core.init()
     try:
         if args.watch:watch()
         elif args.connect:connect(args.provider,args.client_json,args.calendar_id)
         elif args.sync:sys.exit(0 if core.sync() else 1)
-        else:gui(args.day)
+        else:gui(args.day,args.show_90_day_report)
     except Exception as exc:
         print(str(exc),file=sys.stderr)
         if args.connect:input('Press Enter to close.')
