@@ -1,6 +1,6 @@
 # Simple apps
 
-Small Linux desktop applications with a shared visual style. Install the apps you want individually; Newinit is not required.
+Small Linux desktop applications with a shared visual style. Install the apps you want individually.
 
 ## Apps and screenshots
 
