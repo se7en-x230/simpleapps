@@ -2,6 +2,8 @@
 
 Small Linux desktop applications with a shared visual style. Install the apps you want individually.
 
+All apps support Vim-style key bindings, and almost every function can be used from the keyboard. See each app’s page for its shortcuts.
+
 ## Apps and screenshots
 
 Click a screenshot or app name for features, installation and keyboard controls.
