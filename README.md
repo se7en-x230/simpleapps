@@ -4,21 +4,37 @@ Small Linux desktop applications with a shared visual style. Install the apps yo
 
 ## Apps and screenshots
 
-Each app page explains what it does, shows a screenshot and lists installation, startup and compatibility details.
+Click a screenshot or app name for features, installation and keyboard controls.
 
-| App | What it does |
-| --- | --- |
-| [Simplepicker](docs/simplepicker.md) | Application launcher, search and keyboard menus |
-| [SimplePhoto](docs/simplephoto.md) | Photo adjustments, cropping and Vim-style controls |
-| [Simpleplayer](docs/simpleplayer.md) | Music library, artwork and mpv playback |
-| [Simplecalendar](docs/simplecalendar.md) | Calendar, recurring events and CalDAV sync |
-| [Simplecontacts](docs/simplecontacts.md) | Google contacts with an offline local copy |
-| [Simplemail](docs/simplemail.md) | Native IMAP/SMTP mail and account setup |
-| [Simpletorrent](docs/simpletorrent.md) | Transmission download controls |
-| [Simplewallpaper](docs/simplewallpaper.md) | Static and sunrise-aware Wayland wallpaper |
-| [Simplepanel](docs/simplepanel.md) | Status panel and system dashboard |
-| [Simplelock](docs/simplelock.md) | Wayland session lock with music and calendar |
-| [Simple tools](docs/simple-tools.md) | Sound, network, disk, resources, displays and services |
+| [SimplePhoto](docs/simplephoto.md) | [Simpleplayer](docs/simpleplayer.md) |
+| :---: | :---: |
+| [![SimplePhoto screenshot](docs/screenshots/simplephoto-landscape.png)](docs/simplephoto.md) | [![Simpleplayer screenshot](docs/screenshots/simpleplayer.png)](docs/simpleplayer.md) |
+| Photo adjustments, cropping and Vim-style controls | Music library, artwork and mpv playback |
+
+| [Simplecalendar](docs/simplecalendar.md) | [Simplepicker](docs/simplepicker.md) |
+| :---: | :---: |
+| [![Simplecalendar screenshot](docs/screenshots/simplecalendar.png)](docs/simplecalendar.md) | [![Simplepicker screenshot](docs/screenshots/simplepicker.png)](docs/simplepicker.md) |
+| Calendar, recurring events and CalDAV sync | Application launcher, search and keyboard menus |
+
+| [System dashboard](docs/simplepanel.md) | [Simplepanel](docs/simplepanel.md) |
+| :---: | :---: |
+| [![System dashboard screenshot](docs/screenshots/simplepanel.png)](docs/simplepanel.md) | [![Simplepanel screenshot](docs/screenshots/simplepanel-bar.png)](docs/simplepanel.md) |
+| System resources, world clocks and market prices | Compact desktop status panel |
+
+| [Simplemail](docs/simplemail.md) | [Simplecontacts](docs/simplecontacts.md) |
+| :---: | :---: |
+| [![Simplemail screenshot](docs/screenshots/simplemail.png)](docs/simplemail.md) | [![Simplecontacts screenshot](docs/screenshots/simplecontacts.png)](docs/simplecontacts.md) |
+| Native IMAP/SMTP mail and account setup | Google contacts with an offline local copy |
+
+| [Simpletorrent](docs/simpletorrent.md) | [Simple tools](docs/simple-tools.md) |
+| :---: | :---: |
+| [![Simpletorrent screenshot](docs/screenshots/simpletorrent.png)](docs/simpletorrent.md) | [![Simple tools screenshot](docs/screenshots/simple-tools.png)](docs/simple-tools.md) |
+| Transmission download controls | Sound, network, disks, displays and services |
+
+| [Simplewallpaper](docs/simplewallpaper.md) | [Simplelock](docs/simplelock.md) |
+| :---: | :---: |
+| [![Simplewallpaper screenshot](docs/screenshots/simplewallpaper.png)](docs/simplewallpaper.md) | [![Simplelock screenshot](docs/screenshots/simplelock.png)](docs/simplelock.md) |
+| Static and sunrise-aware Wayland wallpaper | Wayland session lock with music and calendar |
 
 ## Install from this checkout
 
