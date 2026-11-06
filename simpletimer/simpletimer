@@ -195,14 +195,16 @@ def gui(model, initial):
             self.hold() # Keep alarms working when the window is closed.
             self.win=Gtk.ApplicationWindow(application=self, title='Simpletimer')
             self.win.set_default_size(460,280)
-            self.win.connect('close-request',self.hide)
+            self.win.connect('close-request',self.close)
             css=Gtk.CssProvider()
-            css.load_from_data(b'window {background:#272625;color:#d8ceb0;} .title {color:#d99a00;font-weight:bold;} .time {font-size:38px;} button {background:#35322e;color:#d8ceb0;} button.active {background:#700909;} entry {background:#35322e;color:#d8ceb0;}')
+            css.load_from_data(b'window {background:#272625;color:#d8ceb0;} .title {color:#d99a00;font-weight:bold;} .time {font-size:38px;} button {background:#35322e;color:#d8ceb0;} button.active,button:focus {background:#700909;} button:focus {outline:2px solid #d99a00;} entry {background:#35322e;color:#d8ceb0;}')
             Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(),css,Gtk.STYLE_PROVIDER_PRIORITY_USER+1)
             box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=8)
             for edge in ('top','bottom','start','end'): getattr(box,'set_margin_'+edge)(10)
             self.win.set_child(box)
-            title=Gtk.Label(label='Simpletimer',xalign=0);title.add_css_class('title');box.append(title)
+            header=Gtk.Box(spacing=8);box.append(header)
+            title=Gtk.Label(label='Simpletimer',xalign=0,hexpand=True);title.add_css_class('title');header.append(title)
+            quit_button=Gtk.Button(label='Quit [Q]');quit_button.connect('clicked',lambda _:self.close());header.append(quit_button)
             tabs=Gtk.Box(spacing=5);box.append(tabs);self.tabs={}
             for i,mode in enumerate(('countdown','stopwatch','pomodoro','fasting','meditation'),1):
                 b=Gtk.Button(label=f'{dict(countdown="Timer",stopwatch="Watch",pomodoro="Focus",fasting="Fast",meditation="Meditate")[mode]} [{i}]');b.connect('clicked',lambda _,m=mode:self.select(m));tabs.append(b);self.tabs[mode]=b
@@ -218,10 +220,36 @@ def gui(model, initial):
                 if label.startswith('Finish'): self.finish_button=b
                 if label.startswith('Set'): self.apply_button=b
                 if label.startswith('Reset'): self.reset_button=b
-            hint=Gtk.Label(label='1–5 modes · h/j/k/l switch · Space start/pause\ni time · m mute bells · f finish · r reset · Esc/q close',wrap=True);box.append(hint)
+            hint=Gtk.Label(label='1–5 modes · h/j/k/l switch · Space start/pause\ni time · m mute bells · f finish · r reset · Esc/q hide · Q quit',wrap=True);box.append(hint)
             self.status=Gtk.Label(wrap=True);box.append(self.status)
             controller=Gtk.EventControllerKey();controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE);controller.connect('key-pressed',self.key);self.win.add_controller(controller)
             self.select(self.mode);GLib.timeout_add(250,self.tick);self.win.present()
+
+        def close(self,*_):
+            if getattr(self,'quit_dialog',None):self.quit_dialog.present();return True
+            dialog=Gtk.Window(title='Quit Simpletimer?',transient_for=self.win,modal=True)
+            self.quit_dialog=dialog;dialog.set_default_size(440,190)
+            box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=12)
+            for edge in ('top','bottom','start','end'):getattr(box,'set_margin_'+edge)(16)
+            dialog.set_child(box)
+            box.append(Gtk.Label(label='Quit Simpletimer?',xalign=0))
+            box.append(Gtk.Label(label='All timer alarms and meditation bells will stop.\nSaved timers are kept and elapsed time continues; alerts resume when you reopen the app.',wrap=True,xalign=0))
+            row=Gtk.Box(spacing=8,halign=Gtk.Align.END);box.append(row)
+            cancel=Gtk.Button(label='Keep running [n / Esc]');quit_button=Gtk.Button(label='Quit [y]');row.append(cancel);row.append(quit_button)
+            def dismiss(*_):self.quit_dialog=None;dialog.destroy();return True
+            def confirm(*_):dismiss();self.quit()
+            cancel.connect('clicked',dismiss);quit_button.connect('clicked',confirm);dialog.connect('close-request',dismiss)
+            def key(_,value,code,state):
+                name=Gdk.keyval_name(value)
+                if name in ('Escape','n','q'):dismiss();return True
+                if name=='y':confirm();return True
+                if name in ('Tab','ISO_Left_Tab','h','j','k','l','Left','Right'):
+                    (quit_button if dialog.get_focus()==cancel else cancel).grab_focus();return True
+                if name in ('Return','KP_Enter','space'):
+                    (confirm if dialog.get_focus()==quit_button else dismiss)();return True
+                return False
+            keys=Gtk.EventControllerKey();keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE);keys.connect('key-pressed',key);dialog.add_controller(keys);self.quit_keys=keys
+            dialog.present();cancel.grab_focus();return True
 
         def hide(self,*_): self.win.set_visible(False);return True
 
@@ -336,7 +364,8 @@ def gui(model, initial):
             focus=self.win.get_focus()
             if isinstance(focus,(Gtk.Entry,Gtk.Text)):return False
             modes=list(self.tabs)
-            if name=='q':self.hide()
+            if name=='Q':self.close()
+            elif name=='q':self.hide()
             elif name in ('1','2','3','4','5'):self.select(modes[int(name)-1])
             elif name in ('h','l','j','k'):self.select(modes[(modes.index(self.mode)+(1 if name in ('l','j') else -1))%len(modes)])
             elif name=='space':self.action()

@@ -53,10 +53,10 @@ Click a screenshot or app name for features, installation and keyboard controls.
 | [![simpleclip screenshot](docs/screenshots/simpleclip.png)](docs/simpleclip.md) | [![simplecapture screenshot](docs/screenshots/simplecapture.png)](docs/simplecapture.md) |
 | Searchable cliphist history with previews | Screenshots, annotation and optional screen recording |
 
-| [Simpletimer](docs/simpletimer.md) |
-| :---: |
-| [![Simpletimer screenshot](docs/screenshots/simpletimer.png)](docs/simpletimer.md) |
-| Countdown, stopwatch, Pomodoro, fasting and meditation with soft bells |
+| [Simpletimer](docs/simpletimer.md) | [Simplebookmarks](docs/simplebookmarks.md) |
+| :---: | :---: |
+| [![Simpletimer screenshot](docs/screenshots/simpletimer.png)](docs/simpletimer.md) | [![Simplebookmarks screenshot](docs/screenshots/simplebookmarks.png)](docs/simplebookmarks.md) |
+| Countdown, stopwatch, Pomodoro, fasting and meditation with soft bells | Search, open and manage bookmarks with Vim keys |
 
 ## Install from this checkout
 

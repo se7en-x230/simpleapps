@@ -784,6 +784,32 @@
         "simpleimage",
         "README.md"
       ]
+    },
+    "simplebookmarks": {
+      "name": "Simplebookmarks",
+      "description": "Search and manage bookmarks with Vim keys",
+      "build": [],
+      "runtime": [
+        "python",
+        "python-gobject",
+        "gtk4"
+      ],
+      "modules": [
+        "gtk4 >= 4.12"
+      ],
+      "commands": [
+        "python3"
+      ],
+      "imports": [
+        "gi"
+      ],
+      "optional": {},
+      "recipe": "bookmarks",
+      "compatibility": "GTK desktop; default browser for opening URLs",
+      "source_files": [
+        "simplebookmarks",
+        "README.md"
+      ]
     }
   }
 }

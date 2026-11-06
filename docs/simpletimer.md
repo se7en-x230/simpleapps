@@ -17,3 +17,5 @@ simpletimer
 
 See [features, configuration, dependencies and keyboard controls](../simpletimer/README.md).
 
+
+Quit (Q or the window close shortcut) asks for confirmation: all alarms and bells stop while the app is closed. Saved timers are retained and elapsed time continues. Esc/q only hide the window and keep alerts running.

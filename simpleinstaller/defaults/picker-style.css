@@ -294,3 +294,5 @@ window.simplepicker-power { background: transparent; }
 .simplepicker-power button:focus image { transform: scale(2); }
 
 .simplepicker-power button image { color: @simplepicker_icon; }
+
+window.websearch .websearch-title {color:@simple_heading;font-size:1.35rem;font-weight:bold;}

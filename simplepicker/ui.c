@@ -614,7 +614,8 @@ char *menu_show(Menu *m) {
   gtk_css_provider_load_from_string(
       base, "window.simplepicker-layer {background:transparent;} .simplepicker "
             ".box-wrapper {padding:20px;} .simplepicker .item-box "
-            "{padding:8px;} .simplepicker .simplepicker-brand {opacity:.5;}");
+            "{padding:8px;} .simplepicker .simplepicker-brand {opacity:.5;} "
+            "window.websearch .websearch-title {color:#f3a40a;font-size:1.35rem;font-weight:bold;}");
   GdkDisplay *display = gdk_display_get_default();
   gtk_style_context_add_provider_for_display(
       display, GTK_STYLE_PROVIDER(base),

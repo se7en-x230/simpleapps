@@ -46,7 +46,7 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
     for name in names:
         before={p for p in stage.rglob('*') if p.is_file()}
         src=work/name;recipe=catalog[name]['recipe'];target=share/name
-        if recipe not in ('wallpaper','tools','photo','files','notes','clip','capture','timer','pdf','image'):
+        if recipe not in ('wallpaper','tools','photo','files','notes','clip','capture','timer','pdf','image','bookmarks'):
             print('\nBuilding '+catalog[name]['name']+'…',flush=True)
             subprocess.run(['make','-C',str(src),'-j2'],env=env,check=True)
         if recipe=='player':
@@ -93,6 +93,8 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
             put(src/'pdf_tools.py',target/'pdf_tools.py')
         elif recipe=='timer':
             put(src/'simpletimer',bins/'simpletimer',0o755)
+        elif recipe=='bookmarks':
+            put(src/'simplebookmarks',bins/'simplebookmarks',0o755)
         elif recipe=='notes':
             put(src/'simplenotes',bins/'simplenotes',0o755)
         elif recipe=='files':
@@ -121,7 +123,7 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
         desktop(share/'applications'/(name+'.desktop'),catalog[name]['name'],command+' %F' if recipe in ('photo','pdf','image') else command,category='Graphics;Photography' if recipe in ('photo','image') else 'Office' if recipe=='pdf' else 'Utility')
         for p in stage.rglob('*'):
             if p.is_file() and p not in before:owners[p]={name}
-    if set(names)<={'simplephoto','simplefiles','simplenotes','simplecapture','simpletimer','simplepdf','simpleimage'}:return owners
+    if set(names)<={'simplephoto','simplefiles','simplenotes','simplecapture','simpletimer','simplepdf','simpleimage','simplebookmarks'}:return owners
     before={p for p in stage.rglob('*') if p.is_file()}
     for p in (root/'simple-common').glob('*.py'):put(p,share/'simple-common'/p.name)
     for p in (root/'simple-common/assets/images').glob('*.png'):put(p,share/'simple/images'/p.name)
@@ -130,7 +132,7 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
 
     for p in stage.rglob('*'):
         if not p.is_file():continue
-        if p not in before:owners[p]=set(names)-{'simplephoto','simplefiles','simplenotes','simplecapture','simpletimer','simplepdf','simpleimage'}
+        if p not in before:owners[p]=set(names)-{'simplephoto','simplefiles','simplenotes','simplecapture','simpletimer','simplepdf','simpleimage','simplebookmarks'}
         rel=p.relative_to(stage).parts
         if (rel[:3] in (('.local','share','simplepicker'),('.local','lib','simplepicker')) or p==bins/'simplepicker-native'):
             owners[p]=set(names)&{'simplepicker','simple-tools'}

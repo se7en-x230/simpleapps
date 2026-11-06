@@ -45,7 +45,11 @@ with TemporaryDirectory() as td:
      app.key(None,Gdk.KEY_l,0,0);assert app.mode=='meditation'
      app.key(None,Gdk.KEY_Escape,0,0);assert not win.get_visible()
      print('PASS: meditation keyboard controls, fixed interval, start/end bells, mute leaves boundary bells audible, hidden-window alerts, open end and manual finish',flush=True)
-     app.quit();return False
+     app.key(None,Gdk.KEY_Q,0,0);assert app.quit_dialog
+     app.quit_keys.emit('key-pressed',Gdk.KEY_Escape,0,0);assert app.quit_dialog is None
+     app.close();assert app.quit_dialog
+     app.quit_keys.emit('key-pressed',Gdk.KEY_Tab,0,0)
+     app.quit_keys.emit('key-pressed',Gdk.KEY_Return,0,0);return False
    except BaseException as exc:errors.append(exc);app.quit();return False
    return True
   GLib.timeout_add(150,tick)

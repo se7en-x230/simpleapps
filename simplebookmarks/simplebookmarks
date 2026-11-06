@@ -1,0 +1,291 @@
+#!/usr/bin/env python3
+"""Portable GTK bookmarks with search, Vim navigation and local JSON storage."""
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+import tomllib
+from urllib.parse import urlsplit
+
+DEFAULTS=dict(bookmarks_file='',window_width=760,window_height=520,start_in_search=True,close_after_open=True)
+
+
+def settings(create=True):
+    base=Path(os.environ.get('XDG_CONFIG_HOME',Path.home()/'.config'))/'simplebookmarks'
+    path=base/'config.toml';data=tomllib.loads(path.read_text()) if path.exists() else {}
+    unknown=data.keys()-DEFAULTS.keys()
+    if unknown:raise ValueError('Unknown Simplebookmarks setting: '+', '.join(sorted(unknown)))
+    cfg=DEFAULTS|data
+    for name,low,high in [('window_width',420,3000),('window_height',300,2000)]:
+        if type(cfg[name]) is not int or not low<=cfg[name]<=high:raise ValueError('Invalid '+name)
+    for name in ('start_in_search','close_after_open'):
+        if type(cfg[name]) is not bool:raise ValueError(name+' must be true or false')
+    if not isinstance(cfg['bookmarks_file'],str):raise ValueError('bookmarks_file must be a path')
+    if cfg['bookmarks_file']:
+        file=Path(os.path.expandvars(cfg['bookmarks_file'])).expanduser()
+        if not file.is_absolute():file=base/file
+    else:
+        share=Path(os.environ.get('XDG_DATA_HOME',Path.home()/'.local/share'))
+        legacy=share/'simplepicker/bookmarks.json'
+        file=legacy if legacy.is_file() else share/'simplebookmarks/bookmarks.json'
+    if create and not path.exists():
+        base.mkdir(parents=True,exist_ok=True)
+        # Pin the selected file: installing/removing Picker later cannot switch lists.
+        try:location='~/'+str(file.relative_to(Path.home()))
+        except ValueError:location=str(file)
+        text='# Paths support ~, environment variables and paths relative to this folder.\n'
+        text+=''.join(key+' = '+json.dumps(location if key=='bookmarks_file' else value)+'\n' for key,value in cfg.items())
+        try:
+            with path.open('x') as out:out.write(text)
+        except FileExistsError:pass
+    return cfg,file.resolve()
+
+
+def valid_url(value):
+    if not isinstance(value,str) or not value or any(ord(c)<32 for c in value):return False
+    try:
+        parts=urlsplit(value)
+        return parts.scheme in ('http','https','ftp') and bool(parts.hostname) or parts.scheme=='file' and bool(parts.path)
+    except ValueError:return False
+
+
+def validate(records):
+    if not isinstance(records,list):raise ValueError('Bookmarks must be a JSON list')
+    for record in records:
+        if not isinstance(record,dict) or not isinstance(record.get('label'),str) or not valid_url(record.get('url')):
+            raise ValueError('Each bookmark needs a label and an http, https, ftp or file URL')
+    return records
+
+
+def atomic(path,data):
+    path.parent.mkdir(parents=True,exist_ok=True)
+    fd,tmp=tempfile.mkstemp(prefix='.'+path.name+'-',dir=path.parent)
+    try:
+        with os.fdopen(fd,'wb') as out:out.write(data);out.flush();os.fsync(out.fileno())
+        os.replace(tmp,path)
+    finally:
+        if os.path.exists(tmp):os.unlink(tmp)
+
+
+class Store:
+    def __init__(self,path):self.path=Path(path);self.load()
+    def read(self):
+        if not self.path.exists():return b'[]'
+        if self.path.stat().st_size>4*1024*1024:raise ValueError('Bookmark file is too large (maximum 4 MiB)')
+        return self.path.read_bytes()
+    def load(self):
+        data=self.read();records=validate(json.loads(data))
+        self.records=records;self.version=hashlib.sha256(data).digest()
+    def change(self,index,record=None):
+        if record is not None:validate([record])
+        self.path.parent.mkdir(parents=True,exist_ok=True)
+        # Same lock and backup names as the legacy Picker editor.
+        with self.path.with_suffix('.lock').open('a') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX)
+            current=self.read()
+            if hashlib.sha256(current).digest()!=self.version:raise ValueError('Bookmarks changed elsewhere. Reload [r] before editing again.')
+            records=list(self.records)
+            if index is None:records.append(record)
+            elif record is None:records.pop(index)
+            else:records[index]=record
+            data=(json.dumps(validate(records),ensure_ascii=False,indent=2)+'\n').encode()
+            if len(data)>4*1024*1024:raise ValueError('Bookmark file would exceed 4 MiB')
+            if self.path.exists():atomic(self.path.with_name(self.path.name+'.bak'),current)
+            atomic(self.path,data)
+            self.records=records;self.version=hashlib.sha256(data).digest()
+
+
+class Usage:
+    def __init__(self,bookmarks):
+        self.path=Path(bookmarks).with_name('bookmark-history.json');self.load()
+    def read(self):
+        if not self.path.exists():return {}
+        if self.path.stat().st_size>4*1024*1024:raise ValueError('Bookmark history is too large')
+        data=json.loads(self.path.read_text())
+        if not isinstance(data,dict):raise ValueError('Bookmark history must be an object')
+        return data
+    def load(self):self.counts=self.read()
+    def count(self,url):
+        value=self.counts.get(url,0)
+        return max(0,value) if type(value) is int else 0
+    def opened(self,url):
+        self.path.parent.mkdir(parents=True,exist_ok=True)
+        with self.path.with_suffix('.lock').open('a') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX);self.load()
+            self.counts[url]=min(self.count(url)+1,2147483647)
+            atomic(self.path,(json.dumps(self.counts,ensure_ascii=False,indent=2)+'\n').encode())
+    def order(self,records):
+        return sorted(range(len(records)),key=lambda i:-self.count(records[i]['url']))
+
+
+def category(record):
+    value=record.get('category','')
+    return value.strip() if isinstance(value,str) else ''
+
+
+def gui(cfg,store,add=False):
+    import gi
+    gi.require_version('Gtk','4.0')
+    from gi.repository import Gtk,Gdk,Gio,GLib
+    usage=Usage(store.path)
+    class App(Gtk.Application):
+        def __init__(self):
+            super().__init__(application_id='org.simpleapps.Simplebookmarks',flags=Gio.ApplicationFlags.NON_UNIQUE)
+            self.visible=[];self.dialog=None
+        def do_activate(self):
+            self.win=Gtk.ApplicationWindow(application=self,title='Simplebookmarks');self.win.set_default_size(cfg['window_width'],cfg['window_height'])
+            self.win.add_css_class('simplebookmarks')
+            box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=10)
+            for edge in ('top','bottom','start','end'):getattr(box,'set_margin_'+edge)(14)
+            self.win.set_child(box);header=Gtk.Box(spacing=6);box.append(header)
+            title=Gtk.Label(label='Simplebookmarks',xalign=0,hexpand=True);title.add_css_class('title');header.append(title)
+            for text,fn in [('Add [a]',lambda:self.edit()),('Edit [e]',lambda:self.edit(self.selected()) if self.selected() is not None else None),('Remove [x]',self.remove)]:
+                button=Gtk.Button(label=text);button.connect('clicked',lambda _,f=fn:f());header.append(button)
+            self.search=Gtk.SearchEntry(placeholder_text='Search bookmarks');self.search.connect('search-changed',lambda _:self.refresh());box.append(self.search)
+            self.list=Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE);self.list.connect('row-activated',lambda *_:self.open())
+            scroll=Gtk.ScrolledWindow(vexpand=True);scroll.set_child(self.list);box.append(scroll)
+            self.status=Gtk.Label(xalign=0,wrap=True);box.append(self.status)
+            self.hint=Gtk.Label(label='Ctrl↵ navigate · j/k move · ↵/l open · / search · y copy · r reload · Esc/q close',xalign=0,ellipsize=3)
+            self.hint.add_css_class('keys');self.hint.set_tooltip_text(self.hint.get_text());box.append(self.hint)
+            css=Gtk.CssProvider();css.load_from_string('.simplebookmarks {background:#272625;color:#e4ded2;} .simplebookmarks .title {color:#f3a40a;font-weight:bold;} .simplebookmarks entry,.simplebookmarks button {background:#35322e;color:#e4ded2;} .simplebookmarks list {background:transparent;color:#e4ded2;} .simplebookmarks row {padding:9px;border-radius:5px;} .simplebookmarks row:selected {background:#8b0000;color:#fff5ef;} .simplebookmarks button:focus {background:#700909;outline:2px solid #d99a00;} .simplebookmarks .url {color:#b5a58d;font-size:11px;} .simplebookmarks .tag {color:#ffbd45;background:#49351d;border:1px solid #b47b22;border-radius:5px;padding:2px 8px;font-weight:bold;font-size:12px;} .simplebookmarks row:selected .tag {background:#49351d;color:#ffcf70;} .simplebookmarks .keys {font-size:11px;color:#b5a58d;}')
+            Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(),css,Gtk.STYLE_PROVIDER_PRIORITY_USER+1)
+            keys=Gtk.EventControllerKey();keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE);keys.connect('key-pressed',self.key);self.win.add_controller(keys)
+            self.refresh();self.win.present()
+            (self.search if cfg['start_in_search'] else self.list).grab_focus()
+            if add:self.edit()
+        def selected(self):
+            row=self.list.get_selected_row();return self.visible[row.get_index()] if row else None
+        def refresh(self):
+            selected=self.selected();query=self.search.get_text().casefold().split()
+            child=self.list.get_first_child()
+            while child:
+                next_child=child.get_next_sibling();self.list.remove(child);child=next_child
+            self.visible=[]
+            for i in usage.order(store.records):
+                record=store.records[i]
+                if not all(word in (record['label']+' '+record['url']+' '+category(record)).casefold() for word in query):continue
+                self.visible.append(i);row=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=3)
+                heading=Gtk.Box(spacing=10);row.append(heading)
+                title=Gtk.Label(label=record['label'] or record['url'],xalign=0,ellipsize=3,hexpand=True);heading.append(title)
+                if category(record):
+                    tag=Gtk.Label(label=category(record),ellipsize=3,max_width_chars=24);tag.add_css_class('tag');tag.set_tooltip_text(category(record));heading.append(tag)
+                url=Gtk.Label(label=record['url'],xalign=0,ellipsize=3);url.add_css_class('url');row.append(url);self.list.append(row)
+            index=self.visible.index(selected) if selected in self.visible else 0
+            self.list.select_row(self.list.get_row_at_index(index));self.status.set_text(f'{len(self.visible)} / {len(store.records)} bookmarks')
+        def move(self,delta):
+            row=self.list.get_selected_row();index=(row.get_index() if row else 0)+delta
+            target=self.list.get_row_at_index(max(0,min(len(self.visible)-1,index)))
+            if target:self.list.select_row(target);target.grab_focus()
+        def open(self):
+            i=self.selected()
+            if i is None:return
+            try:
+                Gio.AppInfo.launch_default_for_uri(store.records[i]['url'],None)
+            except GLib.Error as exc:self.status.set_text(str(exc));return
+            try:usage.opened(store.records[i]['url'])
+            except (OSError,ValueError) as exc:
+                self.status.set_text('Opened link, but could not save usage: '+str(exc));return
+            if cfg['close_after_open']:self.win.close()
+            else:self.refresh()
+        def reload(self):
+            try:store.load();usage.load();self.refresh()
+            except (OSError,ValueError) as exc:self.status.set_text(str(exc))
+        def dialog_window(self,title):
+            if self.dialog:self.dialog.present();return None,None
+            win=Gtk.Window(title=title,transient_for=self.win,modal=True);win.add_css_class('simplebookmarks');win.set_default_size(520,200)
+            self.dialog=win;box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=10)
+            for edge in ('top','bottom','start','end'):getattr(box,'set_margin_'+edge)(14)
+            win.set_child(box);heading=Gtk.Label(label=title,xalign=0);heading.add_css_class('title');box.append(heading)
+            win.connect('close-request',lambda *_:self.close_dialog());return win,box
+        def close_dialog(self):
+            win=self.dialog;self.dialog=None
+            if win:win.destroy()
+            self.list.grab_focus();return True
+        def dialog_keys(self,win,widgets,accept,delete=False):
+            def key(_,value,code,state):
+                name=Gdk.keyval_name(value);ctrl=bool(state&Gdk.ModifierType.CONTROL_MASK)
+                if name=='Escape' or delete and name in ('n','q'):self.close_dialog();return True
+                if delete and name=='y' or ctrl and name in ('Return','KP_Enter','s'):accept();return True
+                if name in ('Tab','ISO_Left_Tab') or delete and name in ('h','j','k','l','Left','Right'):
+                    focus=win.get_focus();index=next((i for i,w in enumerate(widgets) if focus==w or focus and focus.is_ancestor(w)),0)
+                    backwards=name in ('ISO_Left_Tab','h','k','Left') or bool(state&Gdk.ModifierType.SHIFT_MASK)
+                    widgets[(index+(-1 if backwards else 1))%len(widgets)].grab_focus();return True
+                if delete and name in ('Return','KP_Enter','space'):
+                    if win.get_focus()==widgets[-1]:accept()
+                    else:self.close_dialog()
+                    return True
+                return False
+            keys=Gtk.EventControllerKey();keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE);keys.connect('key-pressed',key);win.add_controller(keys);self.dialog_keys_controller=keys
+        def edit(self,index=None):
+            win,box=self.dialog_window('Add bookmark' if index is None else 'Edit bookmark')
+            if not win:return
+            label=Gtk.Entry(placeholder_text='Name');url=Gtk.Entry(placeholder_text='https://…')
+            for text,entry in [('Name',label),('URL',url)]:box.append(Gtk.Label(label=text,xalign=0));box.append(entry)
+            if index is not None:label.set_text(store.records[index]['label']);url.set_text(store.records[index]['url'])
+            error=Gtk.Label(xalign=0,wrap=True);box.append(error);buttons=Gtk.Box(spacing=8,halign=Gtk.Align.END);box.append(buttons)
+            cancel=Gtk.Button(label='Cancel [Esc]');save=Gtk.Button(label='Save [Ctrl+Enter]');buttons.append(cancel);buttons.append(save)
+            def commit():
+                record=(dict(store.records[index]) if index is not None else {})|{'label':label.get_text().strip(),'url':url.get_text().strip()}
+                try:store.change(index,record);self.close_dialog();self.refresh()
+                except (OSError,ValueError,IndexError) as exc:error.set_text(str(exc))
+            cancel.connect('clicked',lambda _:self.close_dialog());save.connect('clicked',lambda _:commit())
+            self.dialog_keys(win,[label,url,cancel,save],commit);win.present();label.grab_focus()
+            self.edit_fields=(label,url,error)
+            if index is None:
+                def clipboard(clip,result):
+                    try:text=clip.read_text_finish(result)
+                    except GLib.Error:return
+                    if self.dialog==win and not url.get_text() and valid_url(text):url.set_text(text)
+                self.win.get_clipboard().read_text_async(None,clipboard)
+        def remove(self):
+            index=self.selected()
+            if index is None:return
+            win,box=self.dialog_window('Remove bookmark?')
+            if not win:return
+            box.append(Gtk.Label(label=store.records[index]['label'],wrap=True,xalign=0));error=Gtk.Label(wrap=True,xalign=0);box.append(error)
+            buttons=Gtk.Box(spacing=8,halign=Gtk.Align.END);box.append(buttons);cancel=Gtk.Button(label='Cancel [n / Esc]');yes=Gtk.Button(label='Remove [y]');buttons.append(cancel);buttons.append(yes)
+            def commit():
+                try:store.change(index);self.close_dialog();self.refresh()
+                except (OSError,ValueError,IndexError) as exc:error.set_text(str(exc))
+            cancel.connect('clicked',lambda _:self.close_dialog());yes.connect('clicked',lambda _:commit())
+            self.dialog_keys(win,[cancel,yes],commit,True);win.present();cancel.grab_focus()
+        def key(self,_,value,code,state):
+            name=Gdk.keyval_name(value);ctrl=bool(state&Gdk.ModifierType.CONTROL_MASK)
+            if name=='Escape':self.win.close();return True
+            if self.dialog:return False
+            if ctrl and name in ('Return','KP_Enter'):self.list.grab_focus();return True
+            if ctrl and name in ('j','k'):self.move(1 if name=='j' else -1);return True
+            if name in ('Return','KP_Enter'):self.open();return True
+            if isinstance(self.win.get_focus(),(Gtk.Entry,Gtk.Text,Gtk.SearchEntry)):return False
+            if ctrl or state&Gdk.ModifierType.ALT_MASK:return False
+            if name=='q':self.win.close()
+            elif name in ('j','Down'):self.move(1)
+            elif name in ('k','Up'):self.move(-1)
+            elif name in ('g','Home'):self.move(-len(self.visible))
+            elif name in ('G','End'):self.move(len(self.visible))
+            elif name=='l':self.open()
+            elif name in ('slash','i'):self.search.grab_focus()
+            elif name=='a':self.edit()
+            elif name=='e':
+                if self.selected() is not None:self.edit(self.selected())
+            elif name in ('x','Delete'):self.remove()
+            elif name=='y':
+                if self.selected() is not None:self.win.get_clipboard().set(store.records[self.selected()]['url'])
+            elif name=='r':self.reload()
+            else:return False
+            return True
+    return App().run([])
+
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--add',action='store_true');parser.add_argument('--check-config',action='store_true');args=parser.parse_args()
+    try:
+        cfg,path=settings(not args.check_config);store=Store(path)
+        if args.check_config:print('Simplebookmarks configuration and bookmark format OK');return 0
+        return gui(cfg,store,args.add)
+    except (OSError,ValueError) as exc:print('Simplebookmarks: '+str(exc),file=sys.stderr);return 1
+if __name__=='__main__':raise SystemExit(main())
