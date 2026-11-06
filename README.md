@@ -56,7 +56,7 @@ Click a screenshot or app name for features, installation and keyboard controls.
 | [Simpletimer](docs/simpletimer.md) |
 | :---: |
 | [![Simpletimer screenshot](docs/screenshots/simpletimer.png)](docs/simpletimer.md) |
-| Countdown, stopwatch, Pomodoro and fasting timer |
+| Countdown, stopwatch, Pomodoro, fasting and meditation with soft bells |
 
 ## Install from this checkout
 

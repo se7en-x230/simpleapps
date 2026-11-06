@@ -10,7 +10,9 @@ import time
 import tomllib
 
 DEFAULTS = dict(countdown_minutes=5, focus_minutes=25, break_minutes=5,
-                fasting_hours=16, fasting_state_dir='', notify=True)
+                fasting_hours=16, fasting_state_dir='', notify=True,
+                meditation_minutes=30)
+MEDITATION_INTERVAL = 600
 
 
 def settings(create=True):
@@ -22,6 +24,9 @@ def settings(create=True):
         val = config[key]
         if type(val) not in (int, float) or not math.isfinite(val) or not 0 < val <= 100000:
             raise ValueError(key+' must be a positive number, at most 100000')
+    val=config['meditation_minutes']
+    if type(val) not in (int,float) or not math.isfinite(val) or not 0<=val<=100000:
+        raise ValueError('meditation_minutes must be 0 (open end) or positive, at most 100000')
     if type(config['notify']) is not bool: raise ValueError('notify must be true or false')
     if not isinstance(config['fasting_state_dir'], str): raise ValueError('fasting_state_dir must be a path')
     if create and not path.exists():
@@ -54,14 +59,23 @@ class Timers:
         self.data = json.loads(path.read_text()) if path.exists() else {}
         if not isinstance(self.data, dict): raise ValueError('Invalid timer state')
         for mode, state in self.data.items():
-            if mode not in ('countdown', 'stopwatch', 'pomodoro') or not isinstance(state, dict): raise ValueError('Invalid timer state')
+            if mode not in ('countdown', 'stopwatch', 'pomodoro', 'meditation') or not isinstance(state, dict): raise ValueError('Invalid timer state')
             for key in ('value', 'since'):
                 val = state.get(key)
                 if val is not None and (type(val) not in (int,float) or not math.isfinite(val) or val < 0): raise ValueError('Invalid timer state')
 
+            if mode=='meditation':
+                val=state.get('total')
+                if type(val) not in (int,float) or not math.isfinite(val) or val<0:raise ValueError('Invalid meditation state')
+                if type(state.get('mute_waypoints',False)) is not bool:raise ValueError('Invalid meditation mute setting')
+                if type(state.get('reached')) is not int or state['reached']<0:raise ValueError('Invalid meditation waypoint state')
+
     def save(self): atomic(self.path, json.dumps(self.data))
 
     def state(self, mode):
+        if mode=='meditation':
+            total=self.config['meditation_minutes']*60
+            return self.data.setdefault(mode,dict(value=total,total=total,reached=0,since=None,done=False,mute_waypoints=False))
         return self.data.setdefault(mode, dict(value=0 if mode=='stopwatch' else self.config['focus_minutes' if mode=='pomodoro' else 'countdown_minutes']*60, since=None, phase='Focus', done=False))
 
     def fast_start(self):
@@ -77,7 +91,7 @@ class Timers:
             return 0 if start is None else max(0, now-start)
         s = self.state(mode)
         delta = max(0, now-s['since']) if s['since'] is not None else 0
-        return s['value']+delta if mode=='stopwatch' else max(0, s['value']-delta)
+        return s['value']+delta if mode=='stopwatch' or (mode=='meditation' and s['total']==0) else max(0, s['value']-delta)
 
     def toggle(self, mode, hours=0):
         if mode=='fasting':
@@ -93,9 +107,37 @@ class Timers:
             if s['done'] and mode=='pomodoro':
                 s['phase'] = 'Break' if s['phase']=='Focus' else 'Focus'
                 s['value'] = self.config['break_minutes' if s['phase']=='Break' else 'focus_minutes']*60
+            elif s['done'] and mode=='meditation':s.update(value=s['total'],reached=0)
             elif s['done']: self.data.pop(mode); s=self.state(mode)
             s['done']=False; s['since']=time.time()
         self.save()
+
+    def set_meditation(self,minutes):
+        if not math.isfinite(minutes) or not 0<=minutes<=100000:raise ValueError('Enter minutes, or 0 for an open-ended session')
+        total=minutes*60
+        muted=self.state('meditation').get('mute_waypoints',False)
+        self.data['meditation']=dict(value=total,total=total,reached=0,since=None,done=False,mute_waypoints=muted)
+        self.save()
+
+    def finish_meditation(self):
+        s=self.state('meditation')
+        if s['done']:return False
+        s.update(value=self.value('meditation') if s['total']==0 else 0,since=None,done=True)
+        self.save();return True
+
+    def meditation_events(self,now=None):
+        s=self.state('meditation')
+        if s['since'] is None:return []
+        value=self.value('meditation',now)
+        elapsed=s['total']-value if s['total'] else value
+        reached=int(max(0,elapsed)/MEDITATION_INTERVAL)
+        if s['total'] and value<=0:
+            s.update(value=0,since=None,done=True,reached=reached);self.save()
+            return ['Meditation finished']
+        if reached>s['reached']:
+            s['reached']=reached;self.save()
+            return [f'Meditation · {reached*10} minutes elapsed']
+        return []
 
     def complete(self):
         completed=[]
@@ -112,6 +154,32 @@ def duration(value):
     return f'{h:02}:{m:02}:{s:02}'
 
 
+def bell_file(path,kind='waypoint'):
+    """Generate a gentle local bell without an audio-library dependency."""
+    import array,wave
+    rate=22050;samples=array.array('h')
+    boundary=kind=='boundary';length=6.0 if boundary else 3.2
+    frequency=396 if boundary else 528;gain=6500 if boundary else 4200
+    for i in range(int(rate*length)):
+        t=i/rate
+        envelope=(1-math.exp(-t/0.035))*math.exp(-(0.8 if boundary else 1.5)*t)*min(1,(length-t)/.3)
+        tone=math.sin(2*math.pi*frequency*t)+.22*math.sin(2*math.pi*frequency*2.71*t)*math.exp(-t)+.08*math.sin(2*math.pi*frequency*4.06*t)*math.exp(-2*t)
+        samples.append(int(gain*envelope*tone))
+    if sys.byteorder!='little':samples.byteswap()
+    with wave.open(str(path),'wb') as stream:
+        stream.setnchannels(1);stream.setsampwidth(2);stream.setframerate(rate);stream.writeframes(samples.tobytes())
+
+
+def play_bell(kind='waypoint'):
+    import shutil,subprocess,tempfile
+    player=next((shutil.which(name) for name in ('paplay','pw-play','aplay') if shutil.which(name)),None)
+    if not player:raise OSError('Bell needs paplay, pw-play or aplay; timer and notifications still work')
+    with tempfile.TemporaryDirectory(prefix='simpletimer-bell-') as td:
+        sound=Path(td)/'bell.wav';bell_file(sound,kind)
+        result=subprocess.run([player,str(sound)],capture_output=True,timeout=30)
+        if result.returncode:raise OSError('Could not play meditation sound: '+result.stderr.decode(errors='replace').strip())
+
+
 def gui(model, initial):
     import gi
     gi.require_version('Gtk','4.0')
@@ -120,7 +188,7 @@ def gui(model, initial):
     class App(Gtk.Application):
         def __init__(self):
             super().__init__(application_id='org.simpleapps.Simpletimer')
-            self.mode=initial; self.win=None
+            self.mode=initial; self.win=None;self.sound_busy=False;self.pending_sound=None
 
         def do_activate(self):
             if self.win: self.win.present(); return
@@ -136,18 +204,21 @@ def gui(model, initial):
             self.win.set_child(box)
             title=Gtk.Label(label='Simpletimer',xalign=0);title.add_css_class('title');box.append(title)
             tabs=Gtk.Box(spacing=5);box.append(tabs);self.tabs={}
-            for i,mode in enumerate(('countdown','stopwatch','pomodoro','fasting'),1):
-                b=Gtk.Button(label=f'{dict(countdown="Timer",stopwatch="Watch",pomodoro="Focus",fasting="Fast")[mode]} [{i}]');b.connect('clicked',lambda _,m=mode:self.select(m));tabs.append(b);self.tabs[mode]=b
+            for i,mode in enumerate(('countdown','stopwatch','pomodoro','fasting','meditation'),1):
+                b=Gtk.Button(label=f'{dict(countdown="Timer",stopwatch="Watch",pomodoro="Focus",fasting="Fast",meditation="Meditate")[mode]} [{i}]');b.connect('clicked',lambda _,m=mode:self.select(m));tabs.append(b);self.tabs[mode]=b
             self.clock=Gtk.Label();self.clock.add_css_class('time');box.append(self.clock)
             self.info=Gtk.Label();box.append(self.info)
+            self.time_label=Gtk.Label(label='Minutes · 0 = open end',xalign=0);box.append(self.time_label)
             self.entry=Gtk.Entry();self.entry.connect('activate',lambda _:self.apply());box.append(self.entry)
+            self.mute=Gtk.CheckButton(label='Mute 10-minute bells [m]');self.mute.connect('toggled',self.mute_changed);box.append(self.mute)
             buttons=Gtk.Box(spacing=5);box.append(buttons)
             self.start=Gtk.Button();self.start.connect('clicked',lambda _:self.action());buttons.append(self.start)
-            for label,callback in [('Reset [r]',self.reset),('Set [Enter]',self.apply),('Close [Esc]',lambda:self.hide())]:
+            for label,callback in [('Reset [r]',self.reset),('Set [Enter]',self.apply),('Finish [f]',self.finish),('Close [Esc]',lambda:self.hide())]:
                 b=Gtk.Button(label=label);b.connect('clicked',lambda _,fn=callback:fn());buttons.append(b)
+                if label.startswith('Finish'): self.finish_button=b
                 if label.startswith('Set'): self.apply_button=b
                 if label.startswith('Reset'): self.reset_button=b
-            hint=Gtk.Label(label='1–4 modes · h/j/k/l switch · Space start/pause\ni time · r reset · Esc/q close',wrap=True);box.append(hint)
+            hint=Gtk.Label(label='1–5 modes · h/j/k/l switch · Space start/pause\ni time · m mute bells · f finish · r reset · Esc/q close',wrap=True);box.append(hint)
             self.status=Gtk.Label(wrap=True);box.append(self.status)
             controller=Gtk.EventControllerKey();controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE);controller.connect('key-pressed',self.key);self.win.add_controller(controller)
             self.select(self.mode);GLib.timeout_add(250,self.tick);self.win.present()
@@ -162,28 +233,40 @@ def gui(model, initial):
             self.mode=mode
             for name,b in self.tabs.items():
                 (b.add_css_class if name==mode else b.remove_css_class)('active')
-            self.entry.set_visible(mode in ('countdown','fasting'))
-            self.apply_button.set_visible(mode in ('countdown','fasting'))
+            self.entry.set_visible(mode in ('countdown','fasting','meditation'))
+            self.apply_button.set_visible(mode in ('countdown','fasting','meditation'))
             self.reset_button.set_visible(mode!='fasting')
-            self.entry.set_text('')
-            self.entry.set_placeholder_text('Start hours ago (0 = now)' if mode=='fasting' else 'Countdown minutes')
+            self.mute.set_visible(mode=='meditation')
+            if mode=='meditation':self.mute.set_active(model.state(mode).get('mute_waypoints',False))
+            self.time_label.set_visible(mode=='meditation');self.finish_button.set_visible(mode=='meditation')
+            self.entry.set_text(f'{model.state(mode)["total"]/60:g}' if mode=='meditation' else '')
+            self.entry.set_placeholder_text('Start hours ago (0 = now)' if mode=='fasting' else 'Minutes (0 = open end)' if mode=='meditation' else 'Countdown minutes')
             self.start.grab_focus();self.tick()
 
         def action(self):
-            self.safe(lambda:model.toggle(self.mode))
+            def run():
+                s=model.state('meditation') if self.mode=='meditation' else None
+                beginning=s is not None and s['since'] is None and (s['done'] or s['value']==s['total'])
+                model.toggle(self.mode)
+                if beginning:self.sound('boundary')
+            self.safe(run)
 
         def reset(self):
             def run():
                 if self.mode=='fasting':
                     raise ValueError('Use Stop to end the fast.')
-                model.data.pop(self.mode,None);model.save()
+                if self.mode=='meditation':
+                    s=model.state('meditation');s.update(value=s['total'],since=None,reached=0,done=False)
+                else:model.data.pop(self.mode,None)
+                model.save()
             self.safe(run)
 
         def apply(self):
             def run():
                 val=float(self.entry.get_text())
                 if not math.isfinite(val) or val<0 or val>100000: raise ValueError('Enter a number between 0 and 100000')
-                if self.mode=='fasting':
+                if self.mode=='meditation':model.set_meditation(val)
+                elif self.mode=='fasting':
                     if model.fast_start() is not None: raise ValueError('Stop the current fast before changing its start')
                     model.toggle('fasting',val)
                 elif self.mode=='countdown':
@@ -192,11 +275,43 @@ def gui(model, initial):
                 self.start.grab_focus()
             self.safe(run)
 
+        def mute_changed(self,button):
+            def run():
+                model.state('meditation')['mute_waypoints']=button.get_active();model.save()
+            self.safe(run)
+
+        def finish(self):
+            def run():
+                if self.mode=='meditation' and model.finish_meditation():self.sound('boundary')
+            self.safe(run)
+
+        def sound(self,kind='waypoint'):
+            if kind=='waypoint' and model.state('meditation').get('mute_waypoints',False):return
+            if self.sound_busy:self.pending_sound=kind;return
+            import threading
+            self.sound_busy=True
+            def work():
+                error=''
+                try:play_bell(kind)
+                except Exception as exc:error=str(exc)
+                def finish():
+                    self.sound_busy=False
+                    if error:self.status.set_text(error)
+                    pending=self.pending_sound;self.pending_sound=None
+                    if pending and not error:self.sound(pending)
+                    return False
+                GLib.idle_add(finish)
+            threading.Thread(target=work,daemon=True,name='meditation-bell').start()
+
         def tick(self):
             try:
                 for mode in model.complete():
                     if model.config['notify']:
                         n=Gio.Notification.new('Simpletimer');n.set_body(mode.title()+' finished');self.send_notification(mode,n)
+                for message in model.meditation_events():
+                    self.sound('boundary' if message=='Meditation finished' else 'waypoint')
+                    if model.config['notify']:
+                        n=Gio.Notification.new('Simpletimer');n.set_body(message);self.send_notification('meditation',n)
                 self.clock.set_text(duration(model.value(self.mode)))
                 if self.mode=='fasting':
                     start=model.fast_start();running=start is not None
@@ -205,7 +320,13 @@ def gui(model, initial):
                 else:
                     s=model.state(self.mode);running=s['since'] is not None
                     self.start.set_label('Pause [Space]' if running else 'Start [Space]')
-                    self.info.set_text((s['phase']+' · ' if self.mode=='pomodoro' else '')+('Finished' if s['done'] else 'Running' if running else 'Ready / paused'))
+                    if self.mode=='meditation':
+                        value=model.value('meditation');elapsed=s['total']-value if s['total'] else value
+                        next_cue=(int(elapsed/MEDITATION_INTERVAL)+1)*MEDITATION_INTERVAL
+                        if s['total']:next_cue=min(s['total'],next_cue)
+                        label='Finished' if s['done'] else ('Open end · ' if not s['total'] else '')+f'Bell every 10 min · next in {duration(max(0,next_cue-elapsed))}'
+                        self.info.set_text(label+(' · paused' if not running and not s['done'] else ''))
+                    else:self.info.set_text((s['phase']+' · ' if self.mode=='pomodoro' else '')+('Finished' if s['done'] else 'Running' if running else 'Ready / paused'))
             except (OSError,ValueError,IndexError) as exc: self.status.set_text(str(exc))
             return True
 
@@ -216,11 +337,13 @@ def gui(model, initial):
             if isinstance(focus,(Gtk.Entry,Gtk.Text)):return False
             modes=list(self.tabs)
             if name=='q':self.hide()
-            elif name in ('1','2','3','4'):self.select(modes[int(name)-1])
-            elif name in ('h','l','j','k'):self.select(modes[(modes.index(self.mode)+(1 if name in ('l','j') else -1))%4])
+            elif name in ('1','2','3','4','5'):self.select(modes[int(name)-1])
+            elif name in ('h','l','j','k'):self.select(modes[(modes.index(self.mode)+(1 if name in ('l','j') else -1))%len(modes)])
             elif name=='space':self.action()
             elif name=='r':self.reset()
             elif name=='i' and self.entry.get_visible():self.entry.grab_focus()
+            elif name=='f' and self.mode=='meditation':self.finish()
+            elif name=='m' and self.mode=='meditation':self.mute.set_active(not self.mute.get_active())
             else:return False
             return True
     return App().run([])
@@ -228,7 +351,7 @@ def gui(model, initial):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--mode',choices=['countdown','stopwatch','pomodoro','fasting'],default='countdown')
+    parser.add_argument('--mode',choices=['countdown','stopwatch','pomodoro','fasting','meditation'],default='countdown')
     parser.add_argument('--check-config',action='store_true')
     args=parser.parse_args()
     try:

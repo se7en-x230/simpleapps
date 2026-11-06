@@ -40,13 +40,14 @@ The editor is an argument list executed without a shell. Programs resolve throug
 - +/−: zoom; =: fit without enlarging small images; 1: decoded pixels at 100%.
 - z in thumbnail view: toggle standard (174×120) / large (300×208). Each launch starts at standard size.
 - Enter: thumbnail grid; Enter in the grid: open selected thumbnail; m: mark/unmark.
+- x or Delete: move marked images (or the selected image) to the desktop Trash after confirmation. In the confirmation, Tab/Shift+Tab or h/j/k/l selects a button, Enter activates it, y confirms and n/Esc cancels. Cancel is focused initially. Unsupported locations report an error; files are never permanently deleted. The view updates automatically.
 - Ctrl+p: print marked images (or the selected image) through the GTK print dialog, one image per page. Prints original resolution with EXIF orientation and fit-to-page; preview rotation/mirroring does not alter the print.
 - e: open marked images (or the current image) in Simplephoto; r or the Refresh button: reload the image/folder. Simplephoto saves notify the viewer immediately: the saved copy appears and becomes selected, including in the thumbnail grid. Other configured editors refresh the folder when their process exits.
-- R: rotate view; x: mirror view. Neither changes the file.
+- R: rotate view; X: mirror view. Neither changes the file.
 - f: fullscreen; b: hide/show bars; s: slideshow.
 - y or Ctrl+x: copy marked/current paths; Y or Ctrl+c: copy the displayed image.
 - i: basic file/image information; o: native Open dialog; ?: controls; Esc/q: close.
 
-The native file chooser uses Simplefiles where the desktop portal is configured, otherwise the desktop's chooser. Clipboard image copies reflect the decoded view, including rotation/mirroring; keep the viewer open until pasted. Detailed EXIF editing, conversion, wallpaper setting and trash actions stay with existing external tools in this first version. It does not modify or delete originals.
+The native file chooser uses Simplefiles where the desktop portal is configured, otherwise the desktop's chooser. Clipboard image copies reflect the decoded view, including rotation/mirroring; keep the viewer open until pasted. Detailed EXIF editing, conversion, wallpaper setting stay with existing external tools in this first version. Viewing does not modify originals; the explicit Trash action moves them to the desktop Trash.
 
 The installer supplies a menu entry, sources and uninstall receipt without changing desktop associations. Run check.py for file ordering/cache tests and check-gui.py in an isolated graphical session for decoding and UI tests.

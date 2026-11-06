@@ -668,7 +668,7 @@
     },
     "simpletimer": {
       "name": "Simpletimer",
-      "description": "Countdown, stopwatch, Pomodoro and persistent fasting timer",
+      "description": "Countdown, stopwatch, Pomodoro, fasting and meditation with interval bells",
       "build": [],
       "runtime": [
         "python",
@@ -684,7 +684,17 @@
       "imports": [
         "gi"
       ],
-      "optional": {},
+      "optional": {
+        "meditation-sound": {
+          "label": "Meditation interval bells",
+          "packages": [
+            "libpulse"
+          ],
+          "commands": [
+            "paplay"
+          ]
+        }
+      },
       "recipe": "timer",
       "compatibility": "GTK desktop; optional desktop notifications",
       "source_files": [

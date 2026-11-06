@@ -13,3 +13,5 @@ simpleimage
 See [features, configuration, dependencies and keyboard controls](../simpleimage/README.md).
 
 Opening Simplephoto with **e** automatically refreshes the viewer and selects each saved copy. **Enter** switches image/thumbnail view; **z** toggles thumbnail size; **Ctrl+p** prints.
+
+**x / Delete** moves marked images or the selected image to Trash after confirmation, then updates the view.

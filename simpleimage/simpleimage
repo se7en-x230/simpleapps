@@ -65,6 +65,19 @@ class Cache:
         while self.bytes>self.limit:self.bytes-=self.items.popitem(last=False)[1].get_byte_length()
 
 
+def trash_paths(paths):
+    """Use desktop Trash only; never fall back to permanent deletion."""
+    from gi.repository import Gio
+    moved=[];failed=[]
+    for path in paths:
+        try:
+            if not Gio.File.new_for_path(str(path)).trash(None):
+                raise OSError('Trash is unavailable for this location')
+            moved.append(path)
+        except Exception as exc:failed.append((path,str(exc)))
+    return moved,failed
+
+
 def gui(cfg,args):
     import gi
     gi.require_version('Gtk','4.0');gi.require_version('GdkPixbuf','2.0');gi.require_foreign('cairo')
@@ -81,17 +94,17 @@ def gui(cfg,args):
             self.rotation=0;self.mirror=False;self.generation=0;self.collection=0;self.closed=False
             self.pool=ThreadPoolExecutor(max_workers=2,thread_name_prefix='simpleimage');self.loader=ThreadPoolExecutor(max_workers=1,thread_name_prefix='image-load')
             self.cache=Cache(cfg['cache_mb']*1024*1024);self.thumbcache=Cache(16*1024*1024)
-            self.large_thumbnails=False;self.pending=None;self.show_grid=False;self.slide=0;self.full=False;self.prefix='';self.marked=set()
+            self.large_thumbnails=False;self.pending=None;self.show_grid=False;self.slide=0;self.full=False;self.prefix='';self.marked=set();self.trashing=False
 
         def do_activate(self):
             self.win=Gtk.ApplicationWindow(application=self,title='Simpleimage');self.win.set_default_size(cfg['window_width'],cfg['window_height']);self.win.connect('close-request',self.close)
-            css=Gtk.CssProvider();css.load_from_data(b'window {background:#272625;color:#d8ceb0;} .title {color:#d99a00;font-weight:bold;} button {background:#35322e;color:#d8ceb0;} gridview {background:#272625;color:#d8ceb0;} gridview label {color:#d8ceb0;} gridview child:selected {background:#700909;}')
+            css=Gtk.CssProvider();css.load_from_data(b'window {background:#272625;color:#d8ceb0;} .title {color:#d99a00;font-weight:bold;} button {background:#35322e;color:#d8ceb0;} button:focus {background:#700909;color:#fff5ef;outline:2px solid #d99a00;} gridview {background:#272625;color:#d8ceb0;} gridview label {color:#d8ceb0;} gridview child:selected {background:#700909;}')
             Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(),css,Gtk.STYLE_PROVIDER_PRIORITY_USER+1)
             box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=3);self.win.set_child(box)
             self.bar=Gtk.Box(spacing=6);self.bar.set_margin_start(8);self.bar.set_margin_end(8);box.append(self.bar)
             title=Gtk.Label(label='Simpleimage',xalign=0);title.add_css_class('title');self.bar.append(title)
             self.name=Gtk.Label(xalign=0,hexpand=True,ellipsize=3);self.bar.append(self.name)
-            for text,fn in [('Open [o]',self.choose),('Edit [e]',self.edit),('Refresh [r]',self.refresh),('Print [Ctrl+p]',self.print_images)]:
+            for text,fn in [('Open [o]',self.choose),('Edit [e]',self.edit),('Trash [x]',self.trash),('Refresh [r]',self.refresh),('Print [Ctrl+p]',self.print_images)]:
                 b=Gtk.Button(label=text);b.connect('clicked',lambda _,f=fn:f());self.bar.append(b)
             self.stack=Gtk.Stack(vexpand=True,hexpand=True);box.append(self.stack)
             self.scroll=Gtk.ScrolledWindow();self.picture=Gtk.Picture(can_shrink=True);self.picture.set_content_fit(Gtk.ContentFit.CONTAIN);self.scroll.set_child(self.picture);self.stack.add_named(self.scroll,'image')
@@ -268,6 +281,70 @@ def gui(cfg,args):
             path=self.selected_path()
             if path:self.open_paths([path])
 
+        def trash(self):
+            if self.trashing:return
+            paths=[p for p in self.files if p in self.marked] or ([self.selected_path()] if self.selected_path() else [])
+            if not paths:return
+            if self.slide:GLib.source_remove(self.slide);self.slide=0
+            if getattr(self,'trash_dialog',None):self.trash_dialog.present();return
+            dialog=Gtk.Window(title='Move to Trash?',transient_for=self.win,modal=True)
+            self.trash_dialog=dialog;dialog.set_default_size(440,180)
+            box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=14)
+            for side in ('start','end','top','bottom'):getattr(box,'set_margin_'+side)(16)
+            dialog.set_child(box)
+            title=Gtk.Label(label='Move to Trash?',xalign=0);title.add_css_class('title');box.append(title)
+            box.append(Gtk.Label(label=(paths[0].name if len(paths)==1 else f'{len(paths)} marked images'),wrap=True,xalign=0))
+            row=Gtk.Box(spacing=10,halign=Gtk.Align.END);box.append(row)
+            buttons=[Gtk.Button(label='Cancel [n / Esc]'),Gtk.Button(label='Move to Trash [y]')]
+            box.append(Gtk.Label(label='Tab / h l: choose · Enter: confirm choice',xalign=0))
+            selected=0;finished=False
+            def finish(accept=False):
+                nonlocal finished
+                if finished:return
+                finished=True;self.trash_dialog=None;dialog.destroy()
+                if accept:self.perform_trash(paths)
+            for index,button in enumerate(buttons):
+                row.append(button);button.connect('clicked',lambda _,i=index:finish(i==1))
+            def close(*_):finish();return True
+            dialog.connect('close-request',close)
+            def key(_,value,code,state):
+                nonlocal selected
+                name=Gdk.keyval_name(value)
+                if name in ('Escape','q','n'):finish();return True
+                if name=='y':finish(True);return True
+                if name in ('Tab','ISO_Left_Tab','h','j','k','l','Left','Right','Up','Down'):
+                    selected=1-selected;buttons[selected].grab_focus();return True
+                if name in ('Return','KP_Enter','space'):finish(selected==1);return True
+                return False
+            keys=Gtk.EventControllerKey();keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+            keys.connect('key-pressed',key);dialog.add_controller(keys);self.trash_keys=keys
+            dialog.present();buttons[0].grab_focus()
+
+        def perform_trash(self,paths):
+            if self.trashing:return
+            self.trashing=True;self.bar.set_sensitive(False)
+            self.collection+=1;self.generation+=1
+            selected=self.selected_path();position=self.files.index(selected) if selected in self.files else 0
+            self.message('Moving to Trash…')
+            future=self.loader.submit(trash_paths,list(paths))
+            def finished(f):
+                try:moved,failed=f.result()
+                except Exception as exc:moved,failed=[],[(paths[0],str(exc))]
+                def apply():
+                    if self.closed:return False
+                    self.trashing=False;self.bar.set_sensitive(True)
+                    removed=set(moved);self.files=[p for p in self.files if p not in removed];self.marked-=removed
+                    self.cache=Cache(cfg['cache_mb']*1024*1024);self.thumbcache=Cache(16*1024*1024)
+                    self.store.splice(0,self.store.get_n_items(),[Item(p) for p in self.files])
+                    if self.files:self.show(self.files.index(selected) if selected in self.files else min(position,len(self.files)-1))
+                    else:
+                        self.index=0;self.pixbuf=None;self.original_size=None;self.picture.set_paintable(None)
+                        self.name.set_text('');self.win.set_title('Simpleimage');self.message('No images remaining · o open')
+                    if failed:self.popup('Could not move to Trash','\n'.join(p.name+': '+error for p,error in failed))
+                    return False
+                GLib.idle_add(apply)
+            future.add_done_callback(finished)
+
         def edit(self):
             paths=[p for p in self.files if p in self.marked] or ([self.selected_path()] if self.selected_path() else [])
             if not paths:return
@@ -358,14 +435,16 @@ def gui(cfg,args):
         def key(self,controller,key,code,state):
             name=Gdk.keyval_name(key);ctrl=bool(state&Gdk.ModifierType.CONTROL_MASK)
             if name in ('q','Escape'):self.win.close();return True
+            if self.trashing:return True
             if ctrl and name=='p':self.print_images();return True
             if name=='o':self.choose()
+            elif name in ('x','Delete') and not ctrl:self.trash()
             elif name=='e':self.edit()
             elif name=='z' and self.show_grid:self.toggle_thumbnail_size()
             elif name in ('Return','KP_Enter'):
                 if self.show_grid and self.files:self.open_thumb(self.selection.get_selected())
                 else:self.toggle_grid()
-            elif name=='question':self.popup('Simpleimage keys','n / Space: next · p / Backspace: previous\nh/j/k/l: pan (navigate in grid) · gg/G: first/last\n+/−: zoom · =: fit · 1: actual decoded size\nf: fullscreen · b: hide bars\nEnter: single image ↔ thumbnails · z: thumbnail size\nm: mark/unmark\ne: edit marked/current in Simplephoto · Ctrl+p: print\nr: reload\nR: rotate view · x: mirror view · s: slideshow\ny / Ctrl+x: copy paths · Y / Ctrl+c: copy image\ni: information · o: open · Esc/q: close\n\nRotation/mirroring affect the view only. Originals stay unchanged.')
+            elif name=='question':self.popup('Simpleimage keys','n / Space: next · p / Backspace: previous\nh/j/k/l: pan (navigate in grid) · gg/G: first/last\n+/−: zoom · =: fit · 1: actual decoded size\nf: fullscreen · b: hide bars\nEnter: single image ↔ thumbnails · z: thumbnail size\nm: mark/unmark · x / Delete: move to Trash\ne: edit marked/current in Simplephoto · Ctrl+p: print\nr: reload\nR: rotate view · X: mirror view · s: slideshow\ny / Ctrl+x: copy paths · Y / Ctrl+c: copy image\ni: information · o: open · Esc/q: close\n\nRotation/mirroring affect the view only. Originals stay unchanged.')
             elif name=='i':self.info()
             elif name=='f':
                 self.full=not self.full
@@ -400,7 +479,7 @@ def gui(cfg,args):
                 if self.prefix=='g':self.show(0);self.prefix=''
                 else:self.prefix='g'
             elif name=='R':self.rotation=(self.rotation+90)%360;self.display()
-            elif name=='x':self.mirror=not self.mirror;self.display()
+            elif name=='X':self.mirror=not self.mirror;self.display()
             elif name in ('plus','minus','equal','1','KP_Add','KP_Subtract'):
                 if name=='equal':self.fit=True
                 else:

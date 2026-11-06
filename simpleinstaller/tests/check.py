@@ -3,6 +3,7 @@ import importlib.machinery,importlib.util,json,os,subprocess,tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch
 BASE=Path(__file__).resolve().parents[1]
+SOURCES=BASE/'sources' if (BASE/'sources').is_dir() else BASE.parent
 import sys
 sys.path.insert(0,str(BASE))
 def module(name,path):
@@ -10,7 +11,7 @@ def module(name,path):
  result=importlib.util.module_from_spec(spec);loader.exec_module(result);return result
 installer=module('installer',BASE/'simpleinstaller')
 resolver=module('resolver',BASE/'runtime/simple-open.py')
-player=module('playerconfig',BASE/'sources/simpleplayer/scripts/simpleplayer-config.py')
+player=module('playerconfig',SOURCES/'simpleplayer/scripts/simpleplayer-config.py')
 class Tests(unittest.TestCase):
  def test_dependency_choices(self):
   plain=installer.packages(['simpleplayer'],set());visual=installer.packages(['simpleplayer'],{'visualizer'})
@@ -55,14 +56,14 @@ class Tests(unittest.TestCase):
    self.assertEqual(target.read_text(),'outside')
  def test_plan_does_not_write_home(self):
   with tempfile.TemporaryDirectory() as td:
-   result=subprocess.run([str(BASE/'simpleinstaller'),'--plan','simpleplayer'],env=dict(os.environ,HOME=td),capture_output=True,text=True)
+   result=subprocess.run([str(BASE/'simpleinstaller'),'--source-root',str(SOURCES),'--plan','simpleplayer'],env=dict(os.environ,HOME=td),capture_output=True,text=True)
    self.assertEqual(result.returncode,0,result.stderr);self.assertEqual(list(Path(td).iterdir()),[])
  def test_refresh_without_notification_service(self):
   with tempfile.TemporaryDirectory() as td,patch.dict(os.environ,{'HOME':td,'XDG_CONFIG_HOME':td+'/cfg','XDG_CACHE_HOME':td+'/cache'},clear=False):
    root=Path(td);(root/'Music').mkdir();(root/'Music/Artist').mkdir();fake=root/'bin';fake.mkdir()
    notify=fake/'notify-send';notify.write_text('#!/bin/sh\nexit 1\n');notify.chmod(0o755)
    env=dict(os.environ,PATH=str(fake)+':'+os.environ['PATH'])
-   result=subprocess.run(['bash',str(BASE/'sources/simpleplayer/playback.sh'),'--refresh-library'],env=env,capture_output=True,text=True)
+   result=subprocess.run(['bash',str(SOURCES/'simpleplayer/playback.sh'),'--refresh-library'],env=env,capture_output=True,text=True)
    self.assertEqual(result.returncode,0,result.stderr)
    self.assertEqual((root/'cache/simpleplayer/folders.index').read_text(),'Artist\n')
  def test_payload_respects_xdg(self):

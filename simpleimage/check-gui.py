@@ -15,7 +15,7 @@ def patched(win):
             assert len(app.files)==3 and app.pixbuf
             assert app.pixbuf.get_width()==640,'Small image unexpectedly enlarged at decode'
             app.key(None,Gdk.KEY_R,0,0);assert app.displayed.get_width()==360
-            app.key(None,Gdk.KEY_x,0,0);assert app.mirror
+            app.key(None,Gdk.KEY_X,0,0);assert app.mirror
             app.key(None,Gdk.KEY_m,0,0);assert len(app.marked)==1
             app.key(None,Gdk.KEY_Return,0,0);assert app.show_grid
             assert app.thumbnail_size()==(174,120)
