@@ -70,14 +70,14 @@ typedef struct Row {
 } Row;
 typedef struct Menu Menu;
 struct Menu {
-  const char *title, *prompt, *icon, *theme, *initial, *sample;
+  const char *title, *prompt, *icon, *theme, *initial, *sample, *heading;
   const char *keys_path, *key_scope;
   GKeyFile *navigation;
   gboolean (*navigate)(Menu *, const char *);
   int width, height, selected, icon_size;
   gboolean input, password, previews, font_rows, bridge, closed, benchmark,
       busy;
-  gboolean vim_navigation, vim_search;
+  gboolean vim_navigation, vim_search, start_in_search, escape_closes;
   gint64 vim_pending_g;
   gboolean cache_previews;
   GHashTable *preview_cache;

@@ -25,3 +25,5 @@ Press `b` for the fullscreen manual blur brush. Paint areas to blur; hold Shift 
 The main editor has two rows of five sliders, including view-only Zoom (100–400% of fit). Drag to pan when zoomed. Crop and blur each hide the adjustment controls and show their own key-help line.
 
 Use the rotation and mirror shortcuts in the bottom guide: `t`/`Shift+t` rotate right/left; `x`/`Shift+x` mirror left/right or top/bottom.
+
+When launched from [Simpleimage](simpleimage.md), saving notifies the viewer immediately and selects the new numbered copy. Save remains visible in crop and blur modes.

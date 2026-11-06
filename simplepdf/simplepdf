@@ -1,0 +1,376 @@
+#!/usr/bin/env python3
+"""Simplepdf — keyboard-first PDF reader using Poppler and GTK4."""
+import argparse
+import json
+import math
+import os
+from pathlib import Path
+import sys
+import threading
+import tomllib
+
+DEFAULTS=dict(window_width=900,window_height=760,fit='page',remember_position=True,
+              scroll_step=60,ocr_language='eng',state_dir='')
+
+def settings(create=True):
+    config=Path(os.environ.get('XDG_CONFIG_HOME',Path.home()/'.config'))/'simplepdf/config.toml'
+    data=tomllib.loads(config.read_text()) if config.exists() else {}
+    if data.keys()-DEFAULTS.keys():raise ValueError('Unknown Simplepdf setting')
+    cfg=DEFAULTS|data
+    for key,lo,hi in [('window_width',400,4000),('window_height',300,4000),('scroll_step',10,500)]:
+        if type(cfg[key]) is not int or not lo<=cfg[key]<=hi:raise ValueError('Invalid '+key)
+    if cfg['fit'] not in ('page','width'):raise ValueError('fit must be page or width')
+    if type(cfg['remember_position']) is not bool:raise ValueError('remember_position must be boolean')
+    for key in ('ocr_language','state_dir'):
+        if not isinstance(cfg[key],str):raise ValueError(key+' must be text')
+    if create and not config.exists():
+        config.parent.mkdir(parents=True,exist_ok=True)
+        with config.open('x') as f:
+            f.write('# Simplepdf settings; restart after editing.\n')
+            for k,v in cfg.items():f.write(k+' = '+json.dumps(v)+'\n')
+    root=Path(os.path.expandvars(cfg['state_dir'])).expanduser() if cfg['state_dir'] else Path(os.environ.get('XDG_STATE_HOME',Path.home()/'.local/state'))/'simplepdf'
+    if not root.is_absolute():root=config.parent/root
+    return cfg,root
+
+
+def write_json(path,data):
+    import tempfile
+    path.parent.mkdir(parents=True,exist_ok=True)
+    fd,tmp=tempfile.mkstemp(dir=path.parent,prefix='.pdf-')
+    try:
+        with os.fdopen(fd,'w') as f:json.dump(data,f);f.flush();os.fsync(f.fileno())
+        os.replace(tmp,path)
+    finally:
+        if os.path.exists(tmp):os.unlink(tmp)
+
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('file',nargs='?');parser.add_argument('--check-config',action='store_true')
+    args=parser.parse_args();cfg,root=settings(not args.check_config)
+    if args.check_config:print('Simplepdf configuration OK');return 0
+    import gi
+    gi.require_version('Gtk','4.0');gi.require_version('Poppler','0.18')
+    gi.require_foreign('cairo')
+    from gi.repository import Gtk,Gdk,Gio,GLib,Poppler
+    import cairo
+    helpers=[Path(__file__).resolve().parent,Path(__file__).resolve().parent.parent/'share/simplepdf']
+    for folder in helpers:
+        if (folder/'pdf_tools.py').exists():sys.path.insert(0,str(folder));break
+    from pdf_tools import process
+
+    class Reader(Gtk.Application):
+        def __init__(self):
+            super().__init__(application_id='org.simpleapps.Simplepdf',flags=Gio.ApplicationFlags.NON_UNIQUE)
+            self.doc=None;self.path=None;self.page=0;self.zoom=1.;self.fit=cfg['fit'];self.rotation=0
+            self.dark=False;self.prefix='';self.number='';self.hits=[];self.query='';self.hit=-1;self.job=False
+            self.record={};self.statefile=None;self.search_generation=0
+
+        def do_activate(self):
+            self.win=Gtk.ApplicationWindow(application=self,title='Simplepdf')
+            self.win.set_default_size(cfg['window_width'],cfg['window_height'])
+            self.win.connect('close-request',self.close)
+            css=Gtk.CssProvider();css.load_from_data(b'window {background:#272625;color:#d8ceb0;} .title {color:#d99a00;font-weight:bold;} button,entry {background:#35322e;color:#d8ceb0;} row:selected {background:#700909;}')
+            Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(),css,Gtk.STYLE_PROVIDER_PRIORITY_USER+1)
+            box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=4);self.win.set_child(box)
+            bar=Gtk.Box(spacing=6);bar.set_margin_start(8);bar.set_margin_end(8);box.append(bar)
+            title=Gtk.Label(label='Simplepdf',xalign=0);title.add_css_class('title');bar.append(title)
+            self.filename=Gtk.Label(ellipsize=3,hexpand=True,xalign=0);bar.append(self.filename)
+            for label,fn in [('Open [o]',self.choose),('Tools [;]',self.tools),('? ',self.help)]:
+                b=Gtk.Button(label=label);b.connect('clicked',lambda _,f=fn:f());bar.append(b)
+            self.entry=Gtk.Entry();self.entry.set_visible(False);self.entry.connect('activate',self.submit);box.append(self.entry)
+            self.scroll=Gtk.ScrolledWindow(hexpand=True,vexpand=True);box.append(self.scroll)
+            self.area=Gtk.DrawingArea(focusable=True);self.area.set_draw_func(self.draw);self.scroll.set_child(self.area)
+            self.last_size=None
+            def resized(*_):
+                size=(self.scroll.get_width(),self.scroll.get_height())
+                if size!=self.last_size:self.last_size=size;self.layout();self.report()
+                return True
+            self.area.add_tick_callback(resized)
+            self.status=Gtk.Label(label='Open a PDF with o · ? keys',xalign=0);self.status.set_margin_start(8);box.append(self.status)
+            self.keys=Gtk.EventControllerKey();self.keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE);self.keys.connect('key-pressed',self.key);self.win.add_controller(self.keys)
+            click=Gtk.GestureClick();click.connect('released',self.follow_link);self.area.add_controller(click)
+            self.win.present()
+            if args.file:self.open_file(Path(args.file).expanduser())
+            self.area.grab_focus()
+
+        def message(self,text):self.status.set_text(text)
+
+        def save(self):
+            if not self.statefile:return
+            if cfg['remember_position']:self.record.update(page=self.page,zoom=self.zoom,fit=self.fit,rotation=self.rotation)
+            write_json(self.statefile,self.record)
+
+        def close(self,*_):
+            if self.job:self.message('An export is running; wait for it to finish.');return True
+            try:self.save()
+            except OSError as e:self.message(str(e));return True
+            return False
+
+        def open_file(self,path,password=None):
+            try:
+                path=path.resolve();doc=Poppler.Document.new_from_file(path.as_uri(),password)
+                if not doc.get_n_pages():raise ValueError('This PDF has no pages')
+                self.save()
+                import hashlib
+                statefile=root/(hashlib.sha256(str(path).encode()).hexdigest()+'.json')
+                record=json.loads(statefile.read_text()) if statefile.exists() else {}
+                if not isinstance(record,dict):record={}
+                page=int(record.get('page',0)) if cfg['remember_position'] else 0
+                zoom=float(record.get('zoom',1))
+                if not math.isfinite(zoom):zoom=1
+                self.doc,self.path,self.record,self.statefile=doc,path,record,statefile
+                self.page=max(0,min(page,doc.get_n_pages()-1));self.zoom=max(.1,min(zoom,5))
+                self.fit=record.get('fit',cfg['fit']);self.rotation=int(record.get('rotation',0))%360
+                if self.rotation not in (0,90,180,270):self.rotation=0
+                self.hits=[];self.query='';self.search_generation+=1
+                self.filename.set_text(path.name);self.win.set_title(path.name+' — Simplepdf');self.layout();self.report()
+            except GLib.Error as e:
+                if e.code==Poppler.Error.ENCRYPTED:
+                    self.password_path=path;self.prompt('password','PDF password');self.entry.set_visibility(False)
+                else:self.message(str(e))
+            except (OSError,ValueError,TypeError) as e:self.message(str(e))
+
+        def report(self):
+            if self.doc:self.message(f'{self.page+1} / {self.doc.get_n_pages()} · {self.zoom:.0%} · h/j/k/l scroll · Ctrl+d/u pages · / search · ? keys')
+
+        def layout(self):
+            if not self.doc:return
+            w,h=self.doc.get_page(self.page).get_size()
+            if self.rotation in (90,270):w,h=h,w
+            aw=max(100,self.scroll.get_width()-24);ah=max(100,self.scroll.get_height()-24)
+            if self.fit:self.zoom=max(.1,min(5,aw/w if self.fit=='width' else min(aw/w,ah/h)))
+            self.area.set_content_width(math.ceil(w*self.zoom));self.area.set_content_height(math.ceil(h*self.zoom));self.area.queue_draw()
+
+        def draw(self,area,cr,width,height):
+            if not self.doc:return
+            page=self.doc.get_page(self.page);w,h=page.get_size();rw,rh=(h,w) if self.rotation in (90,270) else (w,h)
+            cr.translate(max(0,(width-rw*self.zoom)/2),max(0,(height-rh*self.zoom)/2));cr.scale(self.zoom,self.zoom)
+            if self.rotation==90:cr.translate(h,0);cr.rotate(math.pi/2)
+            elif self.rotation==180:cr.translate(w,h);cr.rotate(math.pi)
+            elif self.rotation==270:cr.translate(0,w);cr.rotate(-math.pi/2)
+            cr.set_source_rgb(1,1,1);cr.rectangle(0,0,w,h);cr.fill();page.render(cr)
+            if self.dark:
+                cr.set_operator(cairo.OPERATOR_DIFFERENCE);cr.set_source_rgb(1,1,1);cr.rectangle(0,0,w,h);cr.fill();cr.set_operator(cairo.OPERATOR_OVER)
+            for n,(idx,r) in enumerate(self.hits):
+                if idx==self.page:
+                    cr.set_source_rgba(1,.4 if n==self.hit else .8,0,.4);cr.rectangle(r.x1,r.y1,r.x2-r.x1,r.y2-r.y1);cr.fill()
+
+        def goto(self,page):
+            if not self.doc:return
+            self.page=max(0,min(page,self.doc.get_n_pages()-1));self.layout()
+            self.scroll.get_vadjustment().set_value(0);self.report()
+
+        def choose(self):
+            chooser=Gtk.FileChooserNative(title='Open PDF',transient_for=self.win,action=Gtk.FileChooserAction.OPEN)
+            filt=Gtk.FileFilter();filt.set_name('PDF documents');filt.add_mime_type('application/pdf');chooser.add_filter(filt)
+            def response(c,r):
+                if r==Gtk.ResponseType.ACCEPT and c.get_file():self.open_file(Path(c.get_file().get_path()))
+                c.destroy()
+            chooser.connect('response',response);chooser.show();self.chooser=chooser
+
+        def prompt(self,action,label,text=''):
+            self.input_action=action;self.entry.set_visibility(True);self.entry.set_placeholder_text(label);self.entry.set_text(text);self.entry.set_visible(True);self.entry.grab_focus()
+
+        def submit(self,*_):
+            text=self.entry.get_text();action=self.input_action;self.entry.set_visible(False);self.area.grab_focus()
+            if action=='password':self.open_file(self.password_path,text)
+            elif action=='search':self.search(text)
+            elif action=='page':
+                try:self.goto(int(text)-1)
+                except ValueError:self.message('Enter a page number')
+            elif action=='bookmark':
+                if text.strip():self.record.setdefault('bookmarks',{})[text.strip()]=self.page;self.save();self.message('Bookmark saved')
+            elif action=='split':self.export('split',text)
+            elif action=='ocr':self.export('ocr',text)
+
+        def search(self,text):
+            if not self.doc or not text:return
+            self.query=text;self.hits=[];self.hit=-1;self.search_generation+=1;generation=self.search_generation;doc=self.doc;index=0
+            def step():
+                nonlocal index
+                if generation!=self.search_generation:return False
+                for _ in range(3):
+                    if index>=doc.get_n_pages():
+                        self.message(f'{len(self.hits)} matches');self.next_hit(1);return False
+                    for rect in doc.get_page(index).find_text(text):self.hits.append((index,rect))
+                    index+=1
+                self.message(f'Searching {index}/{doc.get_n_pages()}…');return True
+            GLib.idle_add(step)
+
+        def next_hit(self,direction):
+            if not self.hits:self.message('No matches');return
+            self.hit=(self.hit+direction)%len(self.hits);page,rect=self.hits[self.hit];self.goto(page)
+            # Centre the result vertically for unrotated pages after layout.
+            if not self.rotation:
+                def scroll():self.scroll.get_vadjustment().set_value(max(0,rect.y1*self.zoom-self.scroll.get_height()/2));return False
+                GLib.idle_add(scroll)
+            self.message(f'Match {self.hit+1}/{len(self.hits)} · page {page+1}')
+
+        def popup(self,title,items):
+            win=Gtk.Window(title=title,transient_for=self.win,modal=True);win.set_default_size(430,300)
+            scroll=Gtk.ScrolledWindow();box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=5);scroll.set_child(box);win.set_child(scroll)
+            for label,fn in items:
+                b=Gtk.Button(label=label);b.connect('clicked',lambda _,f=fn:(win.destroy(),f()));box.append(b)
+            keys=Gtk.EventControllerKey()
+            def key(_,value,*args):
+                name=Gdk.keyval_name(value)
+                if name in ('Escape','q'):win.destroy();return True
+                if name in ('j','k'):win.child_focus(Gtk.DirectionType.TAB_FORWARD if name=='j' else Gtk.DirectionType.TAB_BACKWARD);return True
+                return False
+            keys.connect('key-pressed',key);win.add_controller(keys);win.present()
+
+        def tools(self):
+            self.popup('Simplepdf tools',[(name,fn) for name,fn in [
+                ('Extract text [;t]',lambda:self.export('text')),('Extract pages [;e]',lambda:self.prompt('split','Pages: 1,3-5',str(self.page+1))),
+                ('Compress [;c]',lambda:self.export('compress')),('OCR [;o]',lambda:self.prompt('ocr','OCR language',cfg['ocr_language'])),
+                ('Bookmarks [;l]',self.bookmarks),('Contents [Tab]',self.outline),('Print [p]',self.print_doc)]])
+
+        def export(self,action,option=''):
+            if not self.doc or self.job:return
+            suffix={'text':'.txt','split':'-pages.pdf','compress':'-compressed.pdf','ocr':'-searchable.pdf'}[action]
+            chooser=Gtk.FileChooserNative(title='Save '+action+' output',transient_for=self.win,action=Gtk.FileChooserAction.SAVE)
+            chooser.set_current_name(self.path.stem+suffix);source=self.path
+            def response(c,r):
+                dest=c.get_file() if r==Gtk.ResponseType.ACCEPT else None;c.destroy()
+                if not dest:return
+                output=dest.get_path()
+                if not output:self.message('Choose a local output path');return
+                self.job=True;self.message('Processing '+action+'…')
+                def work():
+                    try:result='Saved '+str(process(action,source,output,pages=option or str(self.page+1),language=option or cfg['ocr_language']))
+                    except Exception as e:result=str(e)
+                    def done():self.job=False;self.message(result);return False
+                    GLib.idle_add(done)
+                threading.Thread(target=work,daemon=True).start()
+            chooser.connect('response',response);chooser.show();self.chooser=chooser
+
+        def bookmarks(self):
+            marks=self.record.get('bookmarks',{})
+            self.popup('Bookmarks',[(f'{name} · {page+1}',lambda p=page:self.goto(p)) for name,page in marks.items()] or [('No bookmarks — ;b adds one',lambda:None)])
+
+        def outline(self):
+            if not self.doc:return
+            items=[]
+            def walk(iterator,depth=0):
+                if iterator is None or depth>20:return
+                while True:
+                    action=iterator.get_action()
+                    if action and action.type==Poppler.ActionType.GOTO_DEST:
+                        dest=action.goto_dest.dest
+                        if dest.type==Poppler.DestType.NAMED:dest=self.doc.find_dest(dest.named_dest)
+                        if dest:items.append(('  '*depth+action.any.title,lambda p=dest.page_num-1:self.goto(p)))
+                    walk(iterator.get_child(),depth+1)
+                    if not iterator.next():break
+            try:iterator=Poppler.IndexIter.new(self.doc)
+            except TypeError:iterator=None
+            walk(iterator);self.popup('Contents',items or [('No table of contents',lambda:None)])
+
+        def print_doc(self):
+            if not self.doc:return
+            doc=self.doc;op=Gtk.PrintOperation();op.set_n_pages(doc.get_n_pages())
+            def draw(op,ctx,n):
+                page=doc.get_page(n);w,h=page.get_size();cr=ctx.get_cairo_context();scale=min(ctx.get_width()/w,ctx.get_height()/h);cr.scale(scale,scale);page.render_for_printing(cr)
+            op.connect('draw-page',draw)
+            try:op.run(Gtk.PrintOperationAction.PRINT_DIALOG,self.win)
+            except GLib.Error as e:self.message(str(e))
+
+        def follow_link(self,gesture,n,x,y):
+            if not self.doc or self.rotation:return
+            page=self.doc.get_page(self.page);w,h=page.get_size()
+            x=(x-max(0,(self.area.get_width()-w*self.zoom)/2))/self.zoom
+            y=(y-max(0,(self.area.get_height()-h*self.zoom)/2))/self.zoom
+            for link in page.get_link_mapping():
+                r=link.area
+                if r.x1<=x<=r.x2 and r.y1<=h-y<=r.y2:
+                    action=link.action
+                    if action.type==Poppler.ActionType.GOTO_DEST:
+                        dest=action.goto_dest.dest
+                        if dest.type==Poppler.DestType.NAMED:dest=self.doc.find_dest(dest.named_dest)
+                        if dest:self.goto(dest.page_num-1)
+                    elif action.type==Poppler.ActionType.URI:
+                        uri=action.uri.uri
+                        if uri.startswith(('https://','http://','mailto:')):
+                            self.popup('Open link?',[(uri,lambda:Gio.AppInfo.launch_default_for_uri(uri,None)),('Cancel',lambda:None)])
+                    return
+
+        def links(self):
+            if not self.doc:return
+            items=[]
+            for link in self.doc.get_page(self.page).get_link_mapping():
+                action=link.action
+                if action.type==Poppler.ActionType.GOTO_DEST:
+                    dest=action.goto_dest.dest
+                    if dest.type==Poppler.DestType.NAMED:dest=self.doc.find_dest(dest.named_dest)
+                    if dest:items.append((f'Page {dest.page_num}',lambda p=dest.page_num-1:self.goto(p)))
+                elif action.type==Poppler.ActionType.URI:
+                    uri=action.uri.uri
+                    if uri.startswith(('https://','http://','mailto:')):
+                        items.append((uri,lambda u=uri:Gio.AppInfo.launch_default_for_uri(u,None)))
+            self.popup('Follow link',items or [('No links on this page',lambda:None)])
+
+        def help(self):
+            self.popup('Simplepdf keys',[(text,lambda:None) for text in [
+                'h/j/k/l scroll · d/u half page · Ctrl+d/u next/previous',
+                'gg / G first/last · digits+G page · : page number',
+                'J/K or −/+ zoom · ;w fit width · ;p fit page',
+                '/ search · n/N matches · Tab contents · f links',
+                'R rotate · i invert colours · r reload · p print',
+                ';b add bookmark · ;l list bookmarks',
+                ';t text · ;e extract pages · ;c compress · ;o OCR',
+                'o open · y copy page text · Esc cancel/close · q close']])
+
+        def key(self,controller,key,code,state):
+            name=Gdk.keyval_name(key)
+            if name=='Escape':
+                if self.entry.get_visible():self.entry.set_visible(False);self.area.grab_focus()
+                elif self.prefix or self.number:self.prefix='';self.number='';self.report()
+                else:self.win.close()
+                return True
+            if self.entry.get_visible():return False
+            if self.prefix==';':
+                self.prefix=''
+                actions={'t':lambda:self.export('text'),'e':lambda:self.prompt('split','Pages',str(self.page+1)),
+                         'c':lambda:self.export('compress'),'o':lambda:self.prompt('ocr','OCR language',cfg['ocr_language']),
+                         'b':lambda:self.prompt('bookmark','Bookmark name'),'l':self.bookmarks,
+                         'w':lambda:self.set_fit('width'),'p':lambda:self.set_fit('page'),'h':self.help}
+                if name in actions:actions[name]()
+                return True
+            if name==';':self.prefix=';';self.message(';t text · e pages · c compress · o OCR · b bookmark · l list · w width · p page');return True
+            if name.isdigit():self.number+=name;self.message('Page '+self.number);return True
+            if name=='g':
+                if self.prefix=='g':self.goto(0);self.prefix=''
+                else:self.prefix='g'
+                return True
+            self.prefix=''
+            if name=='q':self.win.close()
+            elif name=='o':self.choose()
+            elif name=='question':self.help()
+            elif name=='slash':self.prompt('search','Search document',self.query)
+            elif name=='colon':self.prompt('page','Page number')
+            elif name=='G':self.goto(int(self.number)-1 if self.number else (self.doc.get_n_pages()-1 if self.doc else 0));self.number=''
+            elif name in ('n','N'):self.next_hit(1 if name=='n' else -1)
+            elif name=='Tab':self.outline()
+            elif name=='f':self.links()
+            elif name=='p':self.print_doc()
+            elif name=='r' and self.path:self.open_file(self.path)
+            elif name=='R':self.rotation=(self.rotation+90)%360;self.layout()
+            elif name=='i':self.dark=not self.dark;self.area.queue_draw()
+            elif name=='y' and self.doc:self.win.get_clipboard().set(self.doc.get_page(self.page).get_text());self.message('Page text copied')
+            elif name in ('J','K','plus','equal','minus'):
+                self.fit='';self.zoom=max(.1,min(5,self.zoom*(1.15 if name in ('K','plus','equal') else 1/1.15)));self.layout();self.report()
+            elif name in ('d','u') and state&Gdk.ModifierType.CONTROL_MASK:self.goto(self.page+(1 if name=='d' else -1))
+            elif name in ('Page_Down','Page_Up','space','BackSpace'):self.goto(self.page+(1 if name in ('Page_Down','space') else -1))
+            elif name in ('h','j','k','l','d','u'):
+                adj=self.scroll.get_hadjustment() if name in ('h','l') else self.scroll.get_vadjustment()
+                step=self.scroll.get_height()/2 if name in ('d','u') else cfg['scroll_step']
+                adj.set_value(adj.get_value()+(step if name in ('j','l','d') else -step))
+            else:return False
+            return True
+
+        def set_fit(self,mode):self.fit=mode;self.layout();self.report()
+    return Reader().run([])
+
+if __name__=='__main__':
+    try:sys.exit(main())
+    except (ValueError,OSError) as e:print('Simplepdf: '+str(e),file=sys.stderr);sys.exit(1)

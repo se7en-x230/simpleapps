@@ -472,7 +472,7 @@ static void vim_search_mode(Menu *m, gboolean search) {
   m->vim_pending_g = 0;
   gtk_editable_set_editable(GTK_EDITABLE(m->entry), search);
   gtk_entry_set_placeholder_text(GTK_ENTRY(m->entry), search
-      ? "Search · Esc returns to navigation" : "/ Search · j/k Move · h Back · l Open");
+      ? (m->escape_closes ? "Search · Ctrl+Enter navigation · Esc close" : "Search · Esc returns to navigation") : "/ Search · j/k Move · h Back · l Open");
   gtk_widget_grab_focus(m->entry);
 }
 static gboolean key(GtkEventControllerKey *c, guint k, guint code,
@@ -484,6 +484,8 @@ static gboolean key(GtkEventControllerKey *c, guint k, guint code,
     return TRUE;
   if (m->vim_navigation) {
     gboolean plain = !(mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK | GDK_META_MASK));
+    if (m->escape_closes && k == GDK_KEY_Escape) { menu_finish(m, NULL); return TRUE; }
+    if (m->escape_closes && (mods & GDK_CONTROL_MASK) && (k == GDK_KEY_Return || k == GDK_KEY_KP_Enter)) { vim_search_mode(m, FALSE); return TRUE; }
     if (m->vim_search && k == GDK_KEY_Escape) {
       vim_search_mode(m, FALSE);
       return TRUE;
@@ -641,6 +643,16 @@ char *menu_show(Menu *m) {
   gtk_widget_set_margin_top(m->panel, 40);
   gtk_widget_set_margin_bottom(m->panel, 40);
   gtk_box_append(GTK_BOX(m->outer), m->panel);
+  if (m->heading) {
+    GtkWidget *heading=gtk_label_new(m->heading);
+    gtk_label_set_xalign(GTK_LABEL(heading),0);
+    gtk_widget_add_css_class(heading,"simpleclip-heading");
+    gtk_box_append(GTK_BOX(m->panel),heading);
+    GtkCssProvider *brand=gtk_css_provider_new();
+    gtk_css_provider_load_from_string(brand,".simpleclip-heading {color:@simple_heading;font-size:18px;font-weight:bold;margin-bottom:8px;}");
+    gtk_style_context_add_provider_for_display(display,GTK_STYLE_PROVIDER(brand),GTK_STYLE_PROVIDER_PRIORITY_USER+1);
+    g_object_unref(brand);
+  }
   GtkWidget *search = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   gtk_widget_add_css_class(search, "search-container");
   gtk_widget_set_overflow(search, GTK_OVERFLOW_HIDDEN);
@@ -726,7 +738,7 @@ char *menu_show(Menu *m) {
       : g_strdup_printf("%s/%s Move · %s Open",up,down,enter);
   if (m->vim_navigation) {
     g_free(hint);
-    hint = g_strdup("j/k Move · h Back · l/Enter Open · gg/G Ends · / Search · q Close");
+    hint = g_strdup(m->escape_closes ? "Ctrl+j/k Move · Ctrl+Enter Navigation · Enter Copy · Esc Close" : "j/k Move · h Back · l/Enter Open · gg/G Ends · / Search · q Close");
   }
   GtkWidget *brand = gtk_label_new(hint);
   g_free(hint);g_free(up);g_free(down);g_free(left);g_free(right);g_free(enter);
@@ -754,7 +766,7 @@ char *menu_show(Menu *m) {
   else
     menu_refresh(m);
   if (!m->closed) {
-    if (m->vim_navigation) vim_search_mode(m, FALSE);
+    if (m->vim_navigation) vim_search_mode(m, m->start_in_search);
     gtk_window_present(GTK_WINDOW(m->window));
     gtk_widget_grab_focus(m->entry);
     if (m->benchmark)

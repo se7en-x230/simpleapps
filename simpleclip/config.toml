@@ -1,0 +1,20 @@
+# Simpleclip uses your existing cliphist history. Restart the picker after changes.
+[clipboard]
+title = "Simpleclip"
+heading = true
+width = 1000
+height = 650
+start_in_search = true
+escape_closes = true
+
+[ui]
+layer_shell = "auto"
+
+[desktop]
+backend = "auto"
+
+[commands]
+copy = ["wl-copy"]
+# Auto-paste is optional. Empty arrays disable it; Enter still copies.
+paste = []
+paste_terminal = []

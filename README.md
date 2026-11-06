@@ -38,6 +38,26 @@ Click a screenshot or app name for features, installation and keyboard controls.
 | [![Simpletorrent screenshot](docs/screenshots/simpletorrent.png)](docs/simpletorrent.md) | [![Simple tools screenshot](docs/screenshots/simple-tools.png)](docs/simple-tools.md) |
 | Transmission download controls | Sound, network, disks, displays and services |
 
+| [Simpleimage](docs/simpleimage.md) | [Simplepdf](docs/simplepdf.md) |
+| :---: | :---: |
+| [![simpleimage screenshot](docs/screenshots/simpleimage.png)](docs/simpleimage.md) | [![simplepdf screenshot](docs/screenshots/simplepdf.png)](docs/simplepdf.md) |
+| Image viewing, thumbnails, printing and Simplephoto editing | PDF reading, search, bookmarks and export tools |
+
+| [Simplefiles](docs/simplefiles.md) | [Simplenotes](docs/simplenotes.md) |
+| :---: | :---: |
+| [![simplefiles screenshot](docs/screenshots/simplefiles.png)](docs/simplefiles.md) | [![simplenotes screenshot](docs/screenshots/simplenotes.png)](docs/simplenotes.md) |
+| Portable file picker with previews and Vim keys | Plain-text notes with instant search and autosave |
+
+| [Simpleclip](docs/simpleclip.md) | [Simplecapture](docs/simplecapture.md) |
+| :---: | :---: |
+| [![simpleclip screenshot](docs/screenshots/simpleclip.png)](docs/simpleclip.md) | [![simplecapture screenshot](docs/screenshots/simplecapture.png)](docs/simplecapture.md) |
+| Searchable cliphist history with previews | Screenshots, annotation and optional screen recording |
+
+| [Simpletimer](docs/simpletimer.md) |
+| :---: |
+| [![Simpletimer screenshot](docs/screenshots/simpletimer.png)](docs/simpletimer.md) |
+| Countdown, stopwatch, Pomodoro and fasting timer |
+
 ## Install from this checkout
 
 The installer currently supports **Arch-based Linux with Python 3 and pacman**. GTK apps can run on other desktops; wallpaper, panel and lock features need the Wayland protocols listed on their app pages.
@@ -65,6 +85,14 @@ mkdir -p releases
 ```
 
 The archive includes required shared code, `install` and `uninstall`. Generated release archives are excluded from Git. Wallpaper theme packs are optional and separate; this checkout includes no large theme collection. You can use your own wallpaper images. See [Simplewallpaper](docs/simplewallpaper.md).
+
+## How the apps are built
+
+These are native Linux desktop apps, primarily using GTK, with C and Python implementations. Python apps use PyGObject to access GTK; C components call native libraries directly. Simpleclip combines a Python launcher with the shared C clipboard interface. Simplecapture combines Python and a shell recording helper.
+
+Established libraries and tools handle the heavy work: Poppler renders PDFs, GdkPixbuf loads images, Pillow/NumPy process photos, mpv plays media, and grim/Swappy/wf-recorder handle capture. Dependencies vary by app; installing one does not require the whole suite.
+
+The apps share visual and keyboard conventions and a common installer. They do not yet use one uniform UI codebase or configuration format. Runtime settings live under XDG config directories, normally `~/.config`; installed source snapshots live under `~/.local/src`. See each app’s page for its settings and portability limits.
 
 ## Source layout
 

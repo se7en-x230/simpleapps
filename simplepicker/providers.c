@@ -861,7 +861,13 @@ static int clipboard(void) {
   char *s = run_text(argv_json("cliphist", "-preview-width", "4096", "list", NULL), NULL, 5);
   if (!s)
     return 2;
-  Menu *m = menu_new("Clipboard", "Clipboard history… Enter copies");
+  J *prefs = obj(config, "clipboard");
+  Menu *m = menu_new(str(prefs,"title"), "Clipboard history… Enter copies");
+  if (yes(prefs,"heading")) m->heading = str(prefs,"title");
+  m->width = json_object_get_int(obj(prefs,"width"));
+  m->height = json_object_get_int(obj(prefs,"height"));
+  m->start_in_search = yes(prefs,"start_in_search");
+  m->escape_closes = yes(prefs,"escape_closes");
   m->icon = "edit-paste";
   m->previews = TRUE;
   m->preview = clip_preview;

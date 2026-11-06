@@ -1,0 +1,480 @@
+#!/usr/bin/env python3
+"""Portable plain-text notes, clipboard capture and a keyboard-first GTK interface."""
+import argparse
+import os
+from pathlib import Path
+import threading
+import tomllib
+import sys
+import mimetypes
+import hashlib
+import json
+
+LIMIT = 2 * 1024 * 1024
+
+
+DEFAULTS = dict(start_in_search=True, autosave=True, autosave_delay_ms=900, search_contents=True,
+                font_size=12, wrap_text=True, window_width=1100, window_height=760,
+                sidebar_width=310)
+
+
+def config_path():
+    return Path(os.environ.get('XDG_CONFIG_HOME', Path.home()/'.config'))/'simplenotes/config.toml'
+
+
+def settings():
+    path = config_path()
+    data = tomllib.loads(path.read_text()) if path.exists() else {}
+    unknown = data.keys() - (DEFAULTS.keys() | {'notes_dir'})
+    if unknown: raise ValueError('Unknown Simplenotes setting: ' + ', '.join(sorted(unknown)))
+    result = DEFAULTS | {k:v for k,v in data.items() if k != 'notes_dir'}
+    for key in ('start_in_search','autosave','search_contents','wrap_text'):
+        if type(result[key]) is not bool: raise ValueError(key+' must be true or false')
+    for key, low, high in [('autosave_delay_ms',300,60000),('font_size',8,32),('window_width',640,3000),('window_height',400,2000),('sidebar_width',160,1200)]:
+        value=result[key]
+        if type(value) is not int or not low <= value <= high: raise ValueError(f'{key} must be an integer from {low} to {high}')
+    if result['sidebar_width'] >= result['window_width']-200: raise ValueError('sidebar_width must leave at least 200 pixels for the editor')
+    return result
+
+
+def ensure_config(root):
+    path=config_path()
+    if path.exists(): return
+    path.parent.mkdir(parents=True,exist_ok=True)
+    root=Path(root)
+    try: location='~/'+str(root.relative_to(Path.home()))
+    except ValueError: location=str(root)
+    text='# Simplenotes settings. Restart the app after editing.\n# Paths support ~ and environment variables; relative paths use this config folder.\n'
+    text+='notes_dir = '+json.dumps(location)+'\n\n'
+    comments={'start_in_search':'Focus search immediately when the app opens.',
+              'autosave':'Save after a typing pause. Switching notes and closing still save.',
+              'autosave_delay_ms':'Typing pause in milliseconds (300–60000).',
+              'search_contents':'Search note contents as well as names.',
+              'font_size':'Editor text size in points (8–32).',
+              'wrap_text':'Wrap long lines in the editor.',
+              'window_width':'Initial window width in pixels.',
+              'window_height':'Initial window height in pixels.',
+              'sidebar_width':'Initial note-list width in pixels.'}
+    for key,value in DEFAULTS.items():
+        text+='# '+comments[key]+'\n'+key+' = '+json.dumps(value)+'\n\n'
+    try:
+        with path.open('x') as f: f.write(text)
+    except FileExistsError: pass
+
+
+def configured_root(override=None):
+    config = Path(os.environ.get('XDG_CONFIG_HOME', Path.home()/'.config'))
+    if override:
+        return Path(override).expanduser().absolute(), False
+    for app in ('simplenotes', 'notesmanager'):
+        path = config/app/'config.toml'
+        if path.exists():
+            data = tomllib.loads(path.read_text())
+            value = data.get('notes_dir')
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f'{path}: notes_dir must be a nonempty string')
+            root = Path(os.path.expandvars(value)).expanduser()
+            return (root if root.is_absolute() else path.parent/root).absolute(), False
+    import gi
+    from gi.repository import GLib
+    docs = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS)
+    return Path(docs or Path.home()/'Documents')/'Notes', True
+
+
+class Notes:
+    def __init__(self, root):
+        self.root = Path(root).absolute()
+
+    def checked(self, path):
+        path = Path(os.path.abspath(path))
+        rel = path.relative_to(self.root)
+        cursor = self.root
+        for part in rel.parts:
+            cursor /= part
+            if cursor.is_symlink(): raise ValueError('Symlinks inside the notes folder are not supported')
+        if not path.resolve().is_relative_to(self.root.resolve()): raise ValueError('Path is outside the notes folder')
+        return path
+
+    def target(self, name, folder=False):
+        name = name.strip()
+        rel = Path(name)
+        if not name or rel.is_absolute() or any(p in ('.', '..') or p.startswith('.') for p in rel.parts) or any(ord(c)<32 for c in name):
+            raise ValueError('Use a relative name such as Projects/Ideas.md; hidden names and .. are not allowed')
+        if not folder and not rel.suffix: rel = rel.with_suffix('.md')
+        return self.checked(self.root/rel)
+
+    def read(self, path):
+        from gi.repository import Gio
+        path = self.checked(path)
+        if not path.is_file() or path.stat().st_size > LIMIT: raise ValueError('Open a text note smaller than 2 MiB')
+        ok, content, etag = Gio.File.new_for_path(str(path)).load_contents(None)
+        if len(content)>LIMIT: raise ValueError('Note is larger than 2 MiB')
+        text = content.decode('utf-8')
+        if any(ord(c)<32 and c not in '\n\r\t\f' for c in text): raise ValueError('This file is not a UTF-8 text note')
+        return text, etag
+
+    def save(self, path, text, etag):
+        from gi.repository import Gio
+        path = self.checked(path)
+        if not path.is_file(): raise ValueError('This note was moved or deleted outside Simplenotes. Save a copy to keep your edits.')
+        if not etag: raise ValueError('This filesystem has no file version token; save a copy to preserve both versions')
+        raw = text.encode('utf-8')
+        if len(raw)>LIMIT: raise ValueError('Notes must be smaller than 2 MiB')
+        ok, new_etag = Gio.File.new_for_path(str(path)).replace_contents(raw, etag, False, Gio.FileCreateFlags.NONE, None)
+        return new_etag
+
+    def create(self, name, text=''):
+        path = self.target(name)
+        if len(text.encode('utf-8'))>LIMIT: raise ValueError('Notes must be smaller than 2 MiB')
+        if not path.parent.is_dir(): raise ValueError('Create the folder first with Shift+n')
+        with path.open('x', encoding='utf-8') as f: f.write(text)
+        return path
+
+    def scan(self):
+        from gi.repository import GLib
+        entries = []
+        def error(exc): raise exc
+        for directory, dirs, files in os.walk(self.root, onerror=error):
+            dirs[:] = sorted(d for d in dirs if not d.startswith('.') and not (Path(directory)/d).is_symlink())
+            for name in sorted(files):
+                path = Path(directory)/name
+                if name.startswith('.') or path.is_symlink() or not path.is_file(): continue
+                mime = mimetypes.guess_type(name)[0] or ''
+                if mime.startswith(('image/', 'video/', 'audio/')): continue
+                if path.suffix.lower() in ('.pdf','.zip','.gz','.7z','.doc','.docx','.xls','.xlsx','.ods','.odt'): continue
+                try: text, _ = self.read(path)
+                except (OSError, ValueError, UnicodeError, GLib.Error): continue
+                entries.append((path, text.casefold()))
+        return sorted(entries, key=lambda item: str(item[0].relative_to(self.root)).casefold())
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--notes-dir')
+    parser.add_argument('--check-config', action='store_true')
+    args = parser.parse_args(argv)
+    try:
+        options = settings()
+        root, create = configured_root(args.notes_dir)
+        if create and not args.check_config: root.mkdir(parents=True, exist_ok=True)
+        if not root.is_dir(): raise ValueError(f'Notes folder unavailable: {root}')
+    except (OSError, ValueError) as exc:
+        print(f'Simplenotes: {exc}', file=sys.stderr); return 1
+    if args.check_config:
+        print(root); return 0
+    # A one-off --notes-dir invocation does not change the persistent location.
+    if not args.notes_dir: ensure_config(root)
+    import gi
+    gi.require_version('Gtk', '4.0')
+    from gi.repository import Gtk, Gdk, Gio, GLib, Pango
+
+    class App(Gtk.Application):
+        def __init__(self):
+            super().__init__(application_id='space.go7.Simplenotes', flags=Gio.ApplicationFlags.NON_UNIQUE)
+            self.store = Notes(root)
+            self.entries = []; self.visible = []; self.path = None; self.etag = None
+            self.dirty = False; self.loading = False; self.timer = None; self.generation = 0
+            self.mode = 'list'; self.prefix = ''; self.selection_guard = False
+            self.recovery = Path(os.environ.get('XDG_STATE_HOME', Path.home()/'.local/state'))/'simplenotes/drafts'
+            self.connect('activate', self.activate)
+
+        def activate(self, *_):
+            self.win = Gtk.ApplicationWindow(application=self, title='Simplenotes')
+            self.win.add_css_class('simplenotes'); self.win.set_default_size(options['window_width'], options['window_height'])
+            self.win.connect('close-request', self.close)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            for side in ('top','bottom','start','end'): getattr(box, 'set_margin_'+side)(12)
+            self.win.set_child(box)
+            header = Gtk.Box(spacing=8); box.append(header)
+            title = Gtk.Label(label='Simplenotes'); title.add_css_class('heading'); header.append(title)
+            self.title = Gtk.Label(label=str(root), ellipsize=Pango.EllipsizeMode.MIDDLE, xalign=0, hexpand=True); header.append(self.title)
+            for label, callback in [('New [n]',lambda *_:self.new_note()),('Paste [p]',lambda *_:self.paste_new()),('Save',lambda *_:self.save()),('Help [?]',self.help)]:
+                button = Gtk.Button(label=label); button.connect('clicked',callback); header.append(button)
+            self.search = Gtk.Entry(placeholder_text='Search names and note contents — /')
+            self.search.connect('changed', lambda *_:self.search_changed()); self.search.connect('activate',lambda *_:self.focus_list()); box.append(self.search)
+            split = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, vexpand=True); split.set_position(options['sidebar_width']); box.append(split)
+            self.model = Gtk.StringList.new([]); self.selection = Gtk.SingleSelection.new(self.model)
+            factory = Gtk.SignalListItemFactory()
+            factory.connect('setup',lambda _,item:item.set_child(Gtk.Label(xalign=0,ellipsize=Pango.EllipsizeMode.MIDDLE)))
+            factory.connect('bind',lambda _,item:item.get_child().set_text(item.get_item().get_string()))
+            self.list = Gtk.ListView(model=self.selection,factory=factory)
+            self.selection.connect('notify::selected',self.selected)
+            self.list.connect('activate',lambda *_:self.edit())
+            focus=Gtk.EventControllerFocus();focus.connect('enter',lambda *_:self.focus_list());self.list.add_controller(focus)
+            scroll = Gtk.ScrolledWindow(); scroll.set_child(self.list); split.set_start_child(scroll)
+            self.buffer = Gtk.TextBuffer(); self.buffer.set_enable_undo(True)
+            self.editor = Gtk.TextView(buffer=self.buffer,wrap_mode=Gtk.WrapMode.WORD_CHAR if options['wrap_text'] else Gtk.WrapMode.NONE,monospace=True,editable=False)
+            self.editor.set_left_margin(16); self.editor.set_right_margin(16); self.editor.set_top_margin(10); self.editor.set_bottom_margin(10)
+            self.buffer.connect('changed',self.changed)
+            self.editor_scroll = Gtk.ScrolledWindow(); self.editor_scroll.set_child(self.editor); split.set_end_child(self.editor_scroll)
+            self.status = Gtk.Label(xalign=0,wrap=True); box.append(self.status)
+            self.guide = Gtk.Label(xalign=0,wrap=True); self.guide.add_css_class('muted'); box.append(self.guide)
+            self.theme()
+            keys = Gtk.EventControllerKey(); keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE); keys.connect('key-pressed',self.key); self.win.add_controller(keys)
+            self.win.present(); self.focus_list()
+            if options['start_in_search']: self.search.grab_focus()
+            self.refresh()
+            self.poll = GLib.timeout_add_seconds(3,self.poll_external)
+
+        def theme(self):
+            display = Gdk.Display.get_default()
+            css = Gtk.CssProvider(); css.load_from_string('@define-color simple_bg #2a2a2a; @define-color simple_fg #e4ded2; @define-color simple_muted #928374; @define-color simple_heading #f3a40a; @define-color simple_button #3b3b3b; @define-color simple_border #49454a; @define-color simple_accent #8b0000; @define-color simple_on_accent #fff5ef;')
+            Gtk.StyleContext.add_provider_for_display(display,css,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            config = Path(os.environ.get('XDG_CONFIG_HOME',Path.home()/'.config'))/'simple'
+            data = Path(os.environ.get('XDG_DATA_HOME',Path.home()/'.local/share'))/'simple'
+            for path in (config/'aliases.css',config/'theme.css',data/'aliases.css',data/'theme.css'):
+                if path.is_file():
+                    provider=Gtk.CssProvider();provider.load_from_path(str(path));Gtk.StyleContext.add_provider_for_display(display,provider,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION+1);break
+            css=Gtk.CssProvider();css.load_from_string('.simplenotes, .simplenotes listview, .simplenotes textview, .simplenotes textview text { background: @simple_bg; color: @simple_fg; } .simplenotes .heading { color: @simple_heading; font-size: 18px; font-weight: bold; } .simplenotes row { padding: 8px; } .simplenotes button, .simplenotes entry { background: @simple_button; color: @simple_fg; border: 1px solid @simple_border; border-radius: 8px; box-shadow: none; } .simplenotes .muted { color: @simple_muted; opacity: 1; } .simplenotes row:selected, .simplenotes row:selected:hover, .simplenotes row:selected:backdrop { background: @simple_accent; color: @simple_on_accent; } .simplenotes row:selected label { color: @simple_on_accent; }')
+            Gtk.StyleContext.add_provider_for_display(display,css,Gtk.STYLE_PROVIDER_PRIORITY_USER+1)
+            font=Gtk.CssProvider();font.load_from_string('.simplenotes textview { font-size: '+str(options['font_size'])+'pt; }')
+            Gtk.StyleContext.add_provider_for_display(display,font,Gtk.STYLE_PROVIDER_PRIORITY_USER+2)
+
+        def text(self):
+            return self.buffer.get_text(self.buffer.get_start_iter(),self.buffer.get_end_iter(),True)
+
+        def draft_path(self):
+            return self.recovery/(hashlib.sha256(str(self.path).encode()).hexdigest()+'.txt')
+
+        def keep_draft(self):
+            self.recovery.mkdir(parents=True,exist_ok=True,mode=0o700)
+            path=self.draft_path();tmp=path.with_suffix('.tmp-'+str(os.getpid()))
+            tmp.write_text(self.text());tmp.chmod(0o600);os.replace(tmp,path)
+
+        def save(self):
+            if self.timer: GLib.source_remove(self.timer);self.timer=None
+            if not self.dirty or self.path is None:return True
+            try:
+                self.keep_draft()
+                self.etag=self.store.save(self.path,self.text(),self.etag)
+                self.dirty=False
+                for i,(path,_) in enumerate(self.entries):
+                    if path==self.path:self.entries[i]=(path,self.text().casefold());break
+                self.draft_path().unlink(missing_ok=True)
+                self.status.set_text('Saved · '+str(self.path.relative_to(root)))
+                return True
+            except (OSError,ValueError,GLib.Error) as exc:
+                self.status.set_text('Not saved: '+str(exc)+' · Ctrl+Shift+s saves your edits as a new note.')
+                return False
+
+        def changed(self,*_):
+            if self.loading or self.path is None:return
+            self.dirty=True;self.status.set_text('Editing · unsaved changes')
+            if self.timer:GLib.source_remove(self.timer)
+            def autosave():self.timer=None;self.save();return False
+            self.timer=GLib.timeout_add(options['autosave_delay_ms'],autosave) if options['autosave'] else None
+
+        def close(self,*_):
+            if not self.save():return True
+            if self.poll:GLib.source_remove(self.poll);self.poll=None
+            return False
+
+        def focus_list(self):
+            self.mode='list';self.editor.set_editable(False);self.list.grab_focus()
+            self.guide.set_text('j/k notes · h/l list/preview · i edit · n new · p paste new · a append · y copy · / search · gg/G · N folder · Ctrl+s save · Esc/q close · ? keys')
+
+        def preview_mode(self):
+            self.mode='preview';self.editor.set_editable(False);self.editor.grab_focus()
+            self.guide.set_text('h/j/k/l move · gg/G start/end · Ctrl+u/d page · i edit · h at start or Ctrl+Enter: note list · Esc close · y copy · Ctrl+s save')
+
+        def edit(self):
+            if self.path is None:return
+            self.mode='edit';self.editor.set_editable(True);self.editor.grab_focus()
+            self.guide.set_text('EDIT · type normally · Ctrl+z undo · Ctrl+Shift+z redo · Ctrl+s save · Ctrl+Shift+s save copy · Ctrl+Enter: notes · Esc close · '+('autosave after a pause' if options['autosave'] else 'manual save'))
+
+        def refresh(self,focus=None,edit=False):
+            if not self.save():return
+            self.generation+=1;generation=self.generation
+            self.status.set_text('Loading notes…')
+            def scan():
+                try:entries=self.store.scan();error=None
+                except Exception as exc:entries=[];error=str(exc)
+                def done():
+                    if generation!=self.generation:return False
+                    if error:self.status.set_text(error);return False
+                    self.entries=entries;self.populate(focus or self.path)
+                    if edit:self.edit()
+                    if self.path is None:self.status.set_text(f'{len(entries)} notes · {root}')
+                    return False
+                GLib.idle_add(done)
+            threading.Thread(target=scan,daemon=True).start()
+
+        def search_changed(self):
+            if not self.save():return
+            self.populate(self.path)
+
+        def populate(self,focus=None):
+            query=self.search.get_text().casefold()
+            self.visible=[p for p,text in self.entries if query in str(p.relative_to(root)).casefold() or (options['search_contents'] and query in text)]
+            self.selection_guard=True
+            self.model.splice(0,self.model.get_n_items(),[str(p.relative_to(root)) for p in self.visible])
+            self.selection.set_selected(self.visible.index(focus) if focus in self.visible else 0)
+            self.selection_guard=False;self.selected()
+
+        def selected(self,*_):
+            if self.selection_guard:return
+            index=self.selection.get_selected();path=self.visible[index] if index<len(self.visible) else None
+            if path==self.path:return
+            if not self.save():
+                self.selection_guard=True
+                if self.path in self.visible:self.selection.set_selected(self.visible.index(self.path))
+                self.selection_guard=False;return
+            if path is None:
+                self.path=None;self.loading=True;self.buffer.set_text('');self.loading=False;self.title.set_text(str(root));return
+            try:text,etag=self.store.read(path)
+            except (OSError,ValueError,GLib.Error) as exc:
+                self.status.set_text(str(exc));self.selection_guard=True
+                self.selection.set_selected(self.visible.index(self.path) if self.path in self.visible else Gtk.INVALID_LIST_POSITION)
+                self.selection_guard=False;return
+            self.path=path;self.etag=etag;self.loading=True
+            self.buffer.set_enable_undo(False);self.buffer.set_text(text);self.buffer.set_enable_undo(True)
+            self.loading=False;self.dirty=False;self.title.set_text(str(path.relative_to(root)))
+            self.status.set_text(f'{len(text):,} characters · {path.relative_to(root)}')
+            if self.draft_path().is_file():
+                self.status.set_text('A recovery draft exists for this note. Press R to recover it as a new note.')
+
+        def move(self,delta=None,end=False):
+            if not self.visible:return
+            current=self.selection.get_selected()
+            if current>=len(self.visible):current=0
+            index=(len(self.visible)-1 if end else 0) if delta is None else max(0,min(len(self.visible)-1,current+delta))
+            self.selection.set_selected(index)
+            self.list.scroll_to(self.selection.get_selected(),Gtk.ListScrollFlags.FOCUS,None)
+
+        def ask_name(self,title,callback,initial=''):
+            dialog=Gtk.Dialog(title=title,transient_for=self.win,modal=True)
+            dialog.add_button('Cancel',Gtk.ResponseType.CANCEL);dialog.add_button('Create',Gtk.ResponseType.OK)
+            entry=Gtk.Entry(text=initial,placeholder_text='Folder/Note.md');entry.set_size_request(420,-1)
+            error=Gtk.Label(wrap=True,xalign=0)
+            dialog.get_content_area().append(entry);dialog.get_content_area().append(error)
+            def response(d,answer):
+                if answer==Gtk.ResponseType.OK:
+                    try:callback(entry.get_text())
+                    except (OSError,ValueError,GLib.Error) as exc:error.set_text(str(exc));return
+                d.destroy()
+            entry.connect('activate',lambda *_:dialog.response(Gtk.ResponseType.OK));dialog.connect('response',response)
+            dialog.present();entry.grab_focus()
+
+        def new_note(self,text='',copy=False):
+            if not copy and not self.save():return
+            def create(name):
+                path=self.store.create(name,text)
+                if copy:
+                    if self.path:self.draft_path().unlink(missing_ok=True)
+                    self.dirty=False
+                self.search.set_text('');self.refresh(path,edit=True)
+            self.ask_name('Save copy' if copy else 'New note',create)
+
+        def new_folder(self):
+            self.ask_name('New folder',lambda name:self.store.target(name,folder=True).mkdir())
+
+        def clipboard_text(self,callback):
+            clipboard=Gdk.Display.get_default().get_clipboard()
+            def ready(clip,result):
+                try:
+                    text=clip.read_text_finish(result)
+                    if not text:raise ValueError('Clipboard has no text')
+                    if len(text.encode('utf-8'))>LIMIT:raise ValueError('Clipboard text exceeds 2 MiB')
+                    callback(text)
+                except (ValueError,GLib.Error) as exc:self.status.set_text(str(exc))
+            clipboard.read_text_async(None,ready)
+
+        def paste_new(self):self.clipboard_text(lambda text:self.new_note(text))
+
+        def append_clipboard(self):
+            path=self.path
+            if path is None:return
+            def append(text):
+                if self.path!=path:self.status.set_text('Note changed before clipboard arrived; please try again');return
+                current=self.text();separator='' if not current or current.endswith('\n\n') else '\n' if current.endswith('\n') else '\n\n'
+                self.buffer.begin_user_action();self.buffer.insert(self.buffer.get_end_iter(),separator+text);self.buffer.end_user_action()
+                self.save()
+            self.clipboard_text(append)
+
+        def copy(self,file=False):
+            if self.path is None:return
+            clip=Gdk.Display.get_default().get_clipboard()
+            if file:
+                value=GLib.Bytes.new((self.path.as_uri()+'\r\n').encode())
+                clip.set_content(Gdk.ContentProvider.new_for_bytes('text/uri-list',value))
+            else:clip.set(self.text())
+            self.status.set_text('Copied file reference' if file else 'Copied note text')
+
+        def recover(self):
+            if self.path and self.draft_path().is_file():self.new_note(self.draft_path().read_text(),copy=True)
+
+        def poll_external(self):
+            if not self.path or self.dirty:return True
+            try:
+                info=Gio.File.new_for_path(str(self.path)).query_info('etag::value',Gio.FileQueryInfoFlags.NONE,None)
+                if info.get_etag()!=self.etag:
+                    path=self.path;self.path=None;self.selected();self.status.set_text('Reloaded external changes · '+path.name)
+            except (OSError,GLib.Error):self.status.set_text('Note moved or removed outside Simplenotes · Ctrl+r refreshes the list')
+            return True
+
+        def help(self,*_):
+            dialog=Gtk.MessageDialog(transient_for=self.win,modal=True,buttons=Gtk.ButtonsType.CLOSE,text='Simplenotes keys',secondary_text='LIST: j/k or arrows select · gg/G first/last · Ctrl+u/d jump · l preview · i/Enter edit · / search · Esc close\n\nNOTES: n new · Shift+n new folder · p new from clipboard · a append clipboard · y copy text · Shift+y copy file reference · Shift+r recover draft · Ctrl+r refresh\n\nEDITOR: i enters text editing; type normally. Ctrl+Enter returns to notes. Esc closes and saves. Ctrl+s save · Ctrl+Shift+s save copy · Ctrl+z undo · Ctrl+Shift+z redo · Ctrl+a/c/v select/copy/paste\n\nPreview uses h/j/k/l to move and gg/G for start/end. Esc closes; q also closes outside text entry. Notes autosave after a short pause. External changes are never silently overwritten.')
+            dialog.connect('response',lambda d,*_:d.destroy());dialog.present()
+
+        def key(self,controller,key,code,state):
+            ctrl=bool(state&Gdk.ModifierType.CONTROL_MASK);shift=bool(state&Gdk.ModifierType.SHIFT_MASK)
+            if state&(Gdk.ModifierType.ALT_MASK|Gdk.ModifierType.SUPER_MASK):return False
+            if ctrl and key in (Gdk.KEY_s,Gdk.KEY_S):
+                if shift:self.new_note(self.text(),copy=True)
+                else:self.save()
+                return True
+            if key==Gdk.KEY_Escape:
+                self.win.close();return True
+            if ctrl and key in (Gdk.KEY_Return,Gdk.KEY_KP_Enter):
+                if self.save():self.focus_list()
+                return True
+            # Gtk.Entry's internal Gtk.Text owns focus, so test its ancestors.
+            widget=self.win.get_focus()
+            while widget:
+                if isinstance(widget,Gtk.Entry):return False
+                widget=widget.get_parent()
+            if self.mode=='edit':return False
+            char=chr(Gdk.keyval_to_unicode(key)) if Gdk.keyval_to_unicode(key) else ''
+            if ctrl and key==Gdk.KEY_r:self.refresh();return True
+            if ctrl and key in (Gdk.KEY_u,Gdk.KEY_d):
+                if self.mode=='list':self.move(-10 if key==Gdk.KEY_u else 10)
+                else:
+                    adjustment=self.editor_scroll.get_vadjustment();adjustment.set_value(adjustment.get_value()+(-1 if key==Gdk.KEY_u else 1)*adjustment.get_page_size()*.8)
+                return True
+            if ctrl:return False
+            if self.prefix:
+                self.prefix=''
+                if char=='g':
+                    if self.mode=='list':self.move()
+                    else:self.buffer.place_cursor(self.buffer.get_start_iter());self.editor.scroll_mark_onscreen(self.buffer.get_insert())
+                return True
+            if char=='g':self.prefix='g';return True
+            if char=='G':
+                if self.mode=='list':self.move(end=True)
+                else:self.buffer.place_cursor(self.buffer.get_end_iter());self.editor.scroll_mark_onscreen(self.buffer.get_insert())
+            elif char=='i' or key in (Gdk.KEY_Return,Gdk.KEY_KP_Enter):self.edit()
+            elif self.mode=='preview' and char and char in 'hjkl':
+                iterator=self.buffer.get_iter_at_mark(self.buffer.get_insert())
+                if char=='h' and iterator.is_start():self.focus_list();return True
+                {'h':iterator.backward_cursor_position,'l':iterator.forward_cursor_position,'j':iterator.forward_line,'k':iterator.backward_line}[char]()
+                self.buffer.place_cursor(iterator);self.editor.scroll_mark_onscreen(self.buffer.get_insert())
+            elif key in (Gdk.KEY_j,Gdk.KEY_Down):self.move(1)
+            elif key in (Gdk.KEY_k,Gdk.KEY_Up):self.move(-1)
+            elif char=='h':self.focus_list()
+            elif char=='l':self.preview_mode()
+            elif char=='/':self.search.grab_focus()
+            elif char=='n':self.new_note()
+            elif char=='N':self.new_folder()
+            elif char=='p':self.paste_new()
+            elif char=='a':self.append_clipboard()
+            elif char=='y':self.copy()
+            elif char=='Y':self.copy(file=True)
+            elif char=='R':self.recover()
+            elif char=='?':self.help()
+            elif char=='q':self.win.close()
+            else:return False
+            return True
+
+    return App().run([])
+
+if __name__=='__main__':raise SystemExit(main())

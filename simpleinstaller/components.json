@@ -509,6 +509,271 @@
         "simplephoto",
         "README.md"
       ]
+    },
+    "simplefiles": {
+      "name": "Simplefiles",
+      "description": "Fast graphical file chooser with Yazi-style keys",
+      "build": [],
+      "runtime": [
+        "python",
+        "python-gobject",
+        "gtk4"
+      ],
+      "modules": [
+        "gtk4 >= 4.12"
+      ],
+      "commands": [
+        "python3"
+      ],
+      "imports": [
+        "gi"
+      ],
+      "optional": {},
+      "recipe": "files",
+      "compatibility": "GTK desktop; optional termfilechooser portal adapter",
+      "source_files": [
+        "simplefiles",
+        "simplefiles-portal",
+        "README.md"
+      ]
+    },
+    "simplenotes": {
+      "name": "Simplenotes",
+      "description": "Plain-text notes, clipboard capture and keyboard editing",
+      "build": [],
+      "runtime": [
+        "python",
+        "python-gobject",
+        "gtk4"
+      ],
+      "modules": [
+        "gtk4 >= 4.12"
+      ],
+      "commands": [
+        "python3"
+      ],
+      "imports": [
+        "gi"
+      ],
+      "optional": {},
+      "recipe": "notes",
+      "compatibility": "GTK desktop; local UTF-8 text files and optional existing sync folder",
+      "source_files": [
+        "simplenotes",
+        "README.md"
+      ]
+    },
+    "simpleclip": {
+      "name": "Simpleclip",
+      "description": "Searchable clipboard history with text and image previews",
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
+      "runtime": [
+        "python",
+        "gtk4",
+        "gtk4-layer-shell",
+        "json-c",
+        "cliphist",
+        "wl-clipboard",
+        "file"
+      ],
+      "modules": [
+        "gtk4 >= 4.12",
+        "gtk4-layer-shell-0",
+        "gio-unix-2.0",
+        "json-c"
+      ],
+      "commands": [
+        "cc",
+        "make",
+        "pkg-config",
+        "python3",
+        "cliphist",
+        "wl-copy",
+        "file"
+      ],
+      "imports": [],
+      "optional": {
+        "clip-video": {
+          "label": "Clipboard video previews",
+          "packages": [
+            "ffmpeg"
+          ],
+          "commands": [
+            "ffmpeg"
+          ]
+        }
+      },
+      "recipe": "clip",
+      "compatibility": "Wayland clipboard; GTK window with optional layer-shell",
+      "source_files": [
+        "simpleclip",
+        "config.toml",
+        "keys.ini",
+        "README.md"
+      ]
+    },
+    "simplecapture": {
+      "name": "Simplecapture",
+      "description": "Region and desktop screenshots with annotation and clipboard output",
+      "build": [],
+      "runtime": [
+        "python",
+        "python-gobject",
+        "gtk4",
+        "grim",
+        "slurp",
+        "swappy",
+        "wl-clipboard"
+      ],
+      "modules": [
+        "gtk4 >= 4.12"
+      ],
+      "commands": [
+        "python3",
+        "grim",
+        "slurp",
+        "swappy",
+        "wl-copy"
+      ],
+      "imports": [
+        "gi"
+      ],
+      "optional": {
+        "capture-recording": {
+          "label": "Screen recording with desktop audio",
+          "packages": [
+            "wf-recorder",
+            "libpulse",
+            "util-linux",
+            "bash"
+          ],
+          "commands": [
+            "wf-recorder",
+            "pactl",
+            "flock",
+            "bash"
+          ]
+        }
+      },
+      "recipe": "capture",
+      "compatibility": "Wayland compositor supporting grim capture; optional GTK capture menu",
+      "source_files": [
+        "simplecapture",
+        "README.md",
+        "record.sh"
+      ]
+    },
+    "simpletimer": {
+      "name": "Simpletimer",
+      "description": "Countdown, stopwatch, Pomodoro and persistent fasting timer",
+      "build": [],
+      "runtime": [
+        "python",
+        "python-gobject",
+        "gtk4"
+      ],
+      "modules": [
+        "gtk4 >= 4.12"
+      ],
+      "commands": [
+        "python3"
+      ],
+      "imports": [
+        "gi"
+      ],
+      "optional": {},
+      "recipe": "timer",
+      "compatibility": "GTK desktop; optional desktop notifications",
+      "source_files": [
+        "simpletimer",
+        "README.md"
+      ]
+    },
+    "simplepdf": {
+      "name": "Simplepdf",
+      "description": "Keyboard-first PDF reader with search, bookmarks and export tools",
+      "build": [],
+      "runtime": [
+        "python",
+        "python-gobject",
+        "python-cairo",
+        "gtk4",
+        "poppler-glib"
+      ],
+      "modules": [
+        "gtk4 >= 4.12",
+        "poppler-glib"
+      ],
+      "commands": [
+        "python3"
+      ],
+      "imports": [
+        "gi",
+        "cairo"
+      ],
+      "optional": {
+        "pdf-tools": {
+          "packages": [
+            "poppler",
+            "qpdf"
+          ],
+          "commands": [
+            "pdftotext",
+            "qpdf"
+          ],
+          "label": "PDF text/page extraction and lossless compression"
+        },
+        "pdf-ocr": {
+          "packages": [
+            "ocrmypdf",
+            "tesseract-data-eng"
+          ],
+          "commands": [
+            "ocrmypdf"
+          ],
+          "label": "Searchable PDF OCR"
+        }
+      },
+      "recipe": "pdf",
+      "compatibility": "GTK desktop; Poppler PDF rendering",
+      "source_files": [
+        "simplepdf",
+        "pdf_tools.py",
+        "README.md"
+      ]
+    },
+    "simpleimage": {
+      "name": "Simpleimage",
+      "description": "Fast keyboard-first image viewer and thumbnail browser",
+      "build": [],
+      "runtime": [
+        "python",
+        "python-gobject",
+        "gtk4",
+        "gdk-pixbuf2",
+        "python-cairo"
+      ],
+      "modules": [
+        "gtk4 >= 4.12",
+        "gdk-pixbuf-2.0"
+      ],
+      "commands": [
+        "python3"
+      ],
+      "imports": [
+        "gi",
+        "cairo"
+      ],
+      "optional": {},
+      "recipe": "image",
+      "compatibility": "GTK desktop; image formats supplied by installed GdkPixbuf loaders",
+      "source_files": [
+        "simpleimage",
+        "README.md"
+      ]
     }
   }
 }

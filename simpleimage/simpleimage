@@ -1,0 +1,423 @@
+#!/usr/bin/env python3
+"""Simpleimage — a small, keyboard-first GTK image viewer."""
+import argparse
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import threading
+import sys
+import tomllib
+
+DEFAULTS=dict(window_width=1100,window_height=760,browse_folder=True,show_hidden=False,
+              slideshow_seconds=5,cache_mb=128,max_dimension=8192,thumbnail_width=174,thumbnail_height=120,thumbnail_large_width=300,thumbnail_large_height=208,editor=['simplephoto'])
+
+
+def settings(create=True):
+    path=Path(os.environ.get('XDG_CONFIG_HOME',Path.home()/'.config'))/'simpleimage/config.toml'
+    data=tomllib.loads(path.read_text()) if path.exists() else {}
+    if data.keys()-DEFAULTS.keys():raise ValueError('Unknown Simpleimage setting')
+    cfg=DEFAULTS|data
+    for key,lo,hi in [('window_width',400,4000),('window_height',300,4000),('slideshow_seconds',1,3600),('cache_mb',16,512),('max_dimension',1024,16384),('thumbnail_width',80,600),('thumbnail_height',60,400),('thumbnail_large_width',80,1000),('thumbnail_large_height',60,800)]:
+        if type(cfg[key]) is not int or not lo<=cfg[key]<=hi:raise ValueError('Invalid '+key)
+    for key in ('browse_folder','show_hidden'):
+        if type(cfg[key]) is not bool:raise ValueError(key+' must be boolean')
+    if not isinstance(cfg['editor'],list) or not cfg['editor'] or any(not isinstance(x,str) or not x for x in cfg['editor']):raise ValueError('editor must be an argument list')
+    if create and not path.exists():
+        path.parent.mkdir(parents=True,exist_ok=True)
+        with path.open('x') as f:
+            f.write('# Portable Simpleimage settings; restart after editing.\n')
+            for key,value in cfg.items():f.write(key+' = '+json.dumps(value)+'\n')
+    return cfg
+
+
+def natural(path):
+    return tuple((1,int(part)) if part.isdigit() else (0,part.casefold()) for part in re.split(r'(\d+)',path.name))
+
+
+def collect(paths,extensions,cfg):
+    paths=[Path(p).expanduser().absolute() for p in paths]
+    start=paths[0] if len(paths)==1 and paths[0].is_file() else None
+    if start and cfg['browse_folder']:paths=[start.parent]
+    found=[]
+    for path in paths:
+        if path.is_dir():
+            found.extend(sorted((p for p in path.iterdir() if p.is_file() and p.suffix.lower().lstrip('.') in extensions and (cfg['show_hidden'] or not p.name.startswith('.'))),key=natural))
+        elif path.is_file():found.append(path)
+    if start and start not in found:found.append(start)
+    found=list(dict.fromkeys(found))
+    return found,found.index(start) if start in found else 0
+
+
+class Cache:
+    def __init__(self,limit):self.limit=limit;self.bytes=0;self.items=OrderedDict()
+    def get(self,key):
+        if key not in self.items:return None
+        self.items.move_to_end(key);return self.items[key]
+    def put(self,key,value):
+        if key in self.items:self.bytes-=self.items.pop(key).get_byte_length()
+        size=value.get_byte_length()
+        if size>self.limit:return
+        self.items[key]=value;self.bytes+=size
+        while self.bytes>self.limit:self.bytes-=self.items.popitem(last=False)[1].get_byte_length()
+
+
+def gui(cfg,args):
+    import gi
+    gi.require_version('Gtk','4.0');gi.require_version('GdkPixbuf','2.0');gi.require_foreign('cairo')
+    from gi.repository import Gtk,Gdk,GdkPixbuf,Gio,GLib,GObject
+    extensions={e.lower() for fmt in GdkPixbuf.Pixbuf.get_formats() for e in fmt.get_extensions()}
+
+    class Item(GObject.Object):
+        def __init__(self,path):super().__init__();self.path=path
+
+    class Viewer(Gtk.Application):
+        def __init__(self):
+            super().__init__(application_id='org.simpleapps.Simpleimage',flags=Gio.ApplicationFlags.NON_UNIQUE)
+            self.files=[];self.index=0;self.pixbuf=None;self.original_size=None;self.fit=True;self.zoom=1
+            self.rotation=0;self.mirror=False;self.generation=0;self.collection=0;self.closed=False
+            self.pool=ThreadPoolExecutor(max_workers=2,thread_name_prefix='simpleimage');self.loader=ThreadPoolExecutor(max_workers=1,thread_name_prefix='image-load')
+            self.cache=Cache(cfg['cache_mb']*1024*1024);self.thumbcache=Cache(16*1024*1024)
+            self.large_thumbnails=False;self.pending=None;self.show_grid=False;self.slide=0;self.full=False;self.prefix='';self.marked=set()
+
+        def do_activate(self):
+            self.win=Gtk.ApplicationWindow(application=self,title='Simpleimage');self.win.set_default_size(cfg['window_width'],cfg['window_height']);self.win.connect('close-request',self.close)
+            css=Gtk.CssProvider();css.load_from_data(b'window {background:#272625;color:#d8ceb0;} .title {color:#d99a00;font-weight:bold;} button {background:#35322e;color:#d8ceb0;} gridview {background:#272625;color:#d8ceb0;} gridview label {color:#d8ceb0;} gridview child:selected {background:#700909;}')
+            Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(),css,Gtk.STYLE_PROVIDER_PRIORITY_USER+1)
+            box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=3);self.win.set_child(box)
+            self.bar=Gtk.Box(spacing=6);self.bar.set_margin_start(8);self.bar.set_margin_end(8);box.append(self.bar)
+            title=Gtk.Label(label='Simpleimage',xalign=0);title.add_css_class('title');self.bar.append(title)
+            self.name=Gtk.Label(xalign=0,hexpand=True,ellipsize=3);self.bar.append(self.name)
+            for text,fn in [('Open [o]',self.choose),('Edit [e]',self.edit),('Refresh [r]',self.refresh),('Print [Ctrl+p]',self.print_images)]:
+                b=Gtk.Button(label=text);b.connect('clicked',lambda _,f=fn:f());self.bar.append(b)
+            self.stack=Gtk.Stack(vexpand=True,hexpand=True);box.append(self.stack)
+            self.scroll=Gtk.ScrolledWindow();self.picture=Gtk.Picture(can_shrink=True);self.picture.set_content_fit(Gtk.ContentFit.CONTAIN);self.scroll.set_child(self.picture);self.stack.add_named(self.scroll,'image')
+            self.store=Gio.ListStore.new(Item);self.selection=Gtk.SingleSelection.new(self.store)
+            factory=Gtk.SignalListItemFactory();factory.connect('setup',self.thumb_setup);factory.connect('bind',self.thumb_bind);factory.connect('unbind',self.thumb_unbind)
+            self.grid=Gtk.GridView.new(self.selection,factory);self.grid.set_min_columns(1);self.grid.set_max_columns(20);self.grid.connect('activate',lambda _,position:self.open_thumb(position))
+            self.columns=1
+            def grid_resize(*_):
+                columns=max(1,self.grid.get_width()//(self.thumbnail_size()[0]+20))
+                if columns!=self.columns:
+                    self.columns=columns;self.grid.set_min_columns(1);self.grid.set_max_columns(columns);self.grid.set_min_columns(columns)
+                return not self.closed
+            self.grid.add_tick_callback(grid_resize)
+            self.gridscroll=Gtk.ScrolledWindow();self.gridscroll.set_child(self.grid);self.stack.add_named(self.gridscroll,'grid')
+            self.status=Gtk.Label(label='o open · ? keys',xalign=0);self.status.set_margin_start(8);box.append(self.status)
+            keys=Gtk.EventControllerKey();keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE);keys.connect('key-pressed',self.key);self.win.add_controller(keys)
+            self.last_size=None
+            def resized(*_):
+                size=(self.scroll.get_width(),self.scroll.get_height())
+                if size!=self.last_size:self.last_size=size;self.layout()
+                return not self.closed
+            self.picture.add_tick_callback(resized)
+            self.win.present()
+            if args.paths:self.open_paths(args.paths)
+
+        def close(self,*_):
+            self.closed=True;self.generation+=1
+            if self.slide:GLib.source_remove(self.slide);self.slide=0
+            self.pool.shutdown(wait=False,cancel_futures=True);self.loader.shutdown(wait=False,cancel_futures=True)
+            return False
+
+        def message(self,text):self.status.set_text(text)
+
+        def open_paths(self,paths):
+            self.collection+=1;generation=self.collection;self.message('Reading folder…')
+            future=self.loader.submit(collect,paths,extensions,cfg)
+            def finished(f):
+                try:result=f.result();error=None
+                except Exception as e:result=None;error=str(e)
+                def apply():
+                    if self.closed or generation!=self.collection:return False
+                    if error:self.message(error);return False
+                    files,index=result
+                    if not files:self.message('No supported images found');return False
+                    self.files=files;self.marked.clear();self.store.remove_all();self.store.splice(0,0,[Item(p) for p in files]);self.show(index);return False
+                GLib.idle_add(apply)
+            future.add_done_callback(finished)
+
+        def current(self):return self.files[self.index] if self.files else None
+
+        def show(self,index):
+            if not self.files:return
+            self.index=max(0,min(index,len(self.files)-1));path=self.current();self.selection.set_selected(self.index)
+            self.generation+=1;generation=self.generation;self.rotation=0;self.mirror=False;self.pixbuf=None;self.picture.set_paintable(None)
+            self.name.set_text(path.name);self.win.set_title(path.name+' — Simpleimage');self.message('Loading '+path.name+'…')
+            if self.pending:self.pending.cancel()
+            try:stat=path.stat();key=(str(path),stat.st_mtime_ns,stat.st_size)
+            except OSError as e:self.message(str(e));return
+            cached=self.cache.get(key)
+            if cached:self.loaded(generation,cached,None);return
+            def load():
+                info=GdkPixbuf.Pixbuf.get_file_info(str(path));original=(info.width,info.height)
+                scale=min(1,cfg['max_dimension']/max(original))
+                pix=GdkPixbuf.Pixbuf.new_from_file_at_scale(str(path),max(1,round(original[0]*scale)),max(1,round(original[1]*scale)),True).apply_embedded_orientation()
+                return pix,original
+            self.pending=self.loader.submit(load)
+            def finished(f):
+                if f.cancelled():return
+                try:pix,original=f.result();error=None
+                except Exception as e:pix=None;original=None;error=str(e)
+                def apply():
+                    if self.closed:return False
+                    if pix:self.cache.put(key,pix)
+                    self.loaded(generation,pix,error,original);return False
+                GLib.idle_add(apply)
+            self.pending.add_done_callback(finished)
+
+        def loaded(self,generation,pix,error,original=None):
+            if generation!=self.generation:return
+            if error:self.message(error);return
+            self.pixbuf=pix;self.original_size=original;self.display()
+
+        def display(self):
+            if not self.pixbuf:return
+            pix=self.pixbuf
+            if self.rotation:pix=pix.rotate_simple({90:GdkPixbuf.PixbufRotation.CLOCKWISE,180:GdkPixbuf.PixbufRotation.UPSIDEDOWN,270:GdkPixbuf.PixbufRotation.COUNTERCLOCKWISE}[self.rotation])
+            if self.mirror:pix=pix.flip(True)
+            self.displayed=pix;self.picture.set_paintable(Gdk.Texture.new_for_pixbuf(pix));self.layout();self.report()
+
+        def layout(self):
+            if not self.pixbuf:return
+            w,h=self.displayed.get_width(),self.displayed.get_height()
+            if self.fit:
+                self.picture.set_content_fit(Gtk.ContentFit.SCALE_DOWN)
+                self.picture.set_size_request(-1,-1);self.scroll.set_policy(Gtk.PolicyType.NEVER,Gtk.PolicyType.NEVER)
+                self.zoom=min(max(1,self.scroll.get_width())/w,max(1,self.scroll.get_height())/h,1)
+            else:
+                self.picture.set_content_fit(Gtk.ContentFit.CONTAIN);self.scroll.set_policy(Gtk.PolicyType.AUTOMATIC,Gtk.PolicyType.AUTOMATIC);self.picture.set_size_request(round(w*self.zoom),round(h*self.zoom))
+            self.report()
+
+        def report(self):
+            if not self.files:return
+            dims=f'{self.pixbuf.get_width()}×{self.pixbuf.get_height()}' if self.pixbuf else ''
+            mark=' ★' if self.current() in self.marked else ''
+            self.message(f'{self.index+1}/{len(self.files)}{mark} · {dims} · {self.zoom:.0%}'+(' · slideshow' if self.slide else '')+' · n/p next/previous · hjkl pan · Enter thumbnails · ? keys')
+
+        def thumb_setup(self,factory,item):
+            box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=3);pic=Gtk.Picture(can_shrink=True);pic.set_size_request(*self.thumbnail_size());pic.set_content_fit(Gtk.ContentFit.CONTAIN);label=Gtk.Label(ellipsize=3,max_width_chars=18)
+            box.append(pic);box.append(label);item.set_child(box);item.pic=pic;item.label=label;item.job=None;item.token=0
+
+        def thumb_unbind(self,factory,item):
+            item.token+=1
+            if item.job:item.job.cancel()
+            item.pic.set_paintable(None)
+
+        def thumb_bind(self,factory,item):
+            self.thumb_unbind(factory,item);token=item.token;width,height=self.thumbnail_size();item.pic.set_size_request(width,height);path=item.get_item().path;item.label.set_text(('★ ' if path in self.marked else '')+path.name)
+            try:stat=path.stat();key=(str(path),stat.st_mtime_ns,stat.st_size,width,height)
+            except OSError:return
+            cached=self.thumbcache.get(key)
+            if cached:item.pic.set_paintable(Gdk.Texture.new_for_pixbuf(cached));return
+            def load():return GdkPixbuf.Pixbuf.new_from_file_at_scale(str(path),width,height,True).apply_embedded_orientation()
+            item.job=self.pool.submit(load)
+            def finished(f):
+                if f.cancelled():return
+                try:pix=f.result()
+                except Exception:return
+                def apply():
+                    if self.closed:return False
+                    self.thumbcache.put(key,pix)
+                    if item.token==token:item.pic.set_paintable(Gdk.Texture.new_for_pixbuf(pix))
+                    return False
+                GLib.idle_add(apply)
+            item.job.add_done_callback(finished)
+
+        def thumbnail_size(self):
+            prefix='thumbnail_large_' if self.large_thumbnails else 'thumbnail_'
+            return cfg[prefix+'width'],cfg[prefix+'height']
+
+        def toggle_thumbnail_size(self):
+            self.large_thumbnails=not self.large_thumbnails
+            position=self.selection.get_selected()
+            count=self.store.get_n_items()
+            if count:
+                self.store.splice(0,count,[Item(p) for p in self.files])
+                self.selection.set_selected(position)
+                self.grid.scroll_to(position,Gtk.ListScrollFlags.FOCUS,None)
+            self.message(('Large' if self.large_thumbnails else 'Standard')+' thumbnails · z toggles size · Enter opens image')
+
+        def toggle_grid(self):
+            self.show_grid=not self.show_grid;self.stack.set_visible_child_name('grid' if self.show_grid else 'image')
+            if self.show_grid:self.grid.grab_focus()
+            else:
+                position=self.selection.get_selected()
+                if position<len(self.files) and position!=self.index:self.show(position)
+
+        def open_thumb(self,position):
+            self.show_grid=False;self.stack.set_visible_child_name('image');self.show(position)
+
+        def choose(self):
+            chooser=Gtk.FileChooserNative(title='Open images',transient_for=self.win,action=Gtk.FileChooserAction.OPEN);chooser.set_select_multiple(True)
+            filt=Gtk.FileFilter();filt.set_name('Images');filt.add_pixbuf_formats();chooser.add_filter(filt)
+            def response(c,result):
+                if result==Gtk.ResponseType.ACCEPT:
+                    files=c.get_files();paths=[files.get_item(i).get_path() for i in range(files.get_n_items())];self.open_paths([p for p in paths if p])
+                c.destroy()
+            chooser.connect('response',response);chooser.show();self.chooser=chooser
+
+        def selected_path(self):
+            position=self.selection.get_selected() if self.show_grid else self.index
+            return self.files[position] if position<len(self.files) else None
+
+        def refresh(self):
+            path=self.selected_path()
+            if path:self.open_paths([path])
+
+        def edit(self):
+            paths=[p for p in self.files if p in self.marked] or ([self.selected_path()] if self.selected_path() else [])
+            if not paths:return
+            try:
+                command=[os.path.expandvars(os.path.expanduser(x)) for x in cfg['editor']]
+                events=Path(command[0]).name=='simplephoto'
+                process=subprocess.Popen(command+(['--saved-events'] if events else [])+[str(p) for p in paths],
+                                         stdout=subprocess.PIPE if events else subprocess.DEVNULL,text=True)
+                self.message('Editor opened · saved copies refresh automatically')
+                parents={p.parent for p in paths}
+                def update(saved=None):
+                    if self.closed:return False
+                    selected=self.selected_path()
+                    # Do not replace a different folder opened while editing.
+                    if selected and selected.parent in parents:
+                        if saved and saved.is_file() and saved.parent in parents:self.open_paths([saved])
+                        elif not saved:self.refresh()
+                    return False
+                def watch():
+                    if events:
+                        for line in process.stdout:
+                            try:
+                                event=json.loads(line)
+                                if event.get('event')=='saved':GLib.idle_add(update,Path(event['path']).absolute())
+                            except (ValueError,KeyError,TypeError):continue
+                        process.stdout.close()
+                    process.wait()
+                    if not events:GLib.idle_add(update)
+                threading.Thread(target=watch,daemon=True,name='editor-events').start()
+            except OSError as e:self.message(str(e))
+
+        def print_images(self,export=None):
+            paths=[p for p in self.files if p in self.marked] or ([self.selected_path()] if self.selected_path() else [])
+            if not paths:return
+            op=Gtk.PrintOperation();op.set_n_pages(len(paths));op.set_job_name('Simpleimage');errors=[]
+            if export:op.set_export_filename(str(export))
+            def draw(operation,context,page):
+                try:
+                    # Print originals, with EXIF orientation, independently of preview size/rotation.
+                    pix=GdkPixbuf.Pixbuf.new_from_file(str(paths[page])).apply_embedded_orientation()
+                    w,h=pix.get_width(),pix.get_height();scale=min(context.get_width()/w,context.get_height()/h)
+                    cr=context.get_cairo_context();cr.translate((context.get_width()-w*scale)/2,(context.get_height()-h*scale)/2);cr.scale(scale,scale)
+                    Gdk.cairo_set_source_pixbuf(cr,pix,0,0);cr.paint()
+                except Exception as e:errors.append(str(e));operation.cancel()
+            op.connect('draw-page',draw)
+            try:
+                result=op.run(Gtk.PrintOperationAction.EXPORT if export else Gtk.PrintOperationAction.PRINT_DIALOG,self.win)
+                if errors:self.message('Print failed: '+errors[0])
+                elif result==Gtk.PrintOperationResult.APPLY:self.message('Print job prepared')
+                return result
+            except GLib.Error as e:self.message(str(e))
+
+        def slideshow(self):
+            if self.slide:GLib.source_remove(self.slide);self.slide=0
+            elif self.files:
+                def advance():
+                    if self.closed:return False
+                    if not self.show_grid:self.show((self.index+1)%len(self.files))
+                    return True
+                self.slide=GLib.timeout_add_seconds(cfg['slideshow_seconds'],advance)
+            self.report()
+
+        def popup(self,title,text):
+            win=Gtk.Window(title=title,transient_for=self.win,modal=True);win.set_default_size(520,320)
+            scroll=Gtk.ScrolledWindow();label=Gtk.Label(label=text,wrap=True,selectable=True,xalign=0);label.set_margin_start(15);label.set_margin_end(15);label.set_margin_top(15);label.set_margin_bottom(15);scroll.set_child(label);win.set_child(scroll)
+            keys=Gtk.EventControllerKey()
+            def key(_,value,*args):
+                name=Gdk.keyval_name(value)
+                if name in ('q','Escape'):win.destroy();return True
+                if name in ('j','k'):
+                    adj=scroll.get_vadjustment();adj.set_value(adj.get_value()+(50 if name=='j' else -50));return True
+                return False
+            keys.connect('key-pressed',key);win.add_controller(keys);win.present()
+
+        def info(self):
+            if not self.current():return
+            try:
+                stat=self.current().stat();text=f'{self.current()}\n\n{stat.st_size:,} bytes\n'
+                if self.pixbuf:
+                    text+=f'Displayed decode: {self.pixbuf.get_width()} × {self.pixbuf.get_height()}\n'
+                    if self.original_size:text+=f'Source: {self.original_size[0]} × {self.original_size[1]}\n'
+                    for option in ('orientation','icc-profile','comment'):
+                        val=self.pixbuf.get_option(option)
+                        if val:text+=f'{option}: '+('present' if option=='icc-profile' else val[:300])+'\n'
+                self.popup('Image information',text)
+            except OSError as e:self.message(str(e))
+
+        def key(self,controller,key,code,state):
+            name=Gdk.keyval_name(key);ctrl=bool(state&Gdk.ModifierType.CONTROL_MASK)
+            if name in ('q','Escape'):self.win.close();return True
+            if ctrl and name=='p':self.print_images();return True
+            if name=='o':self.choose()
+            elif name=='e':self.edit()
+            elif name=='z' and self.show_grid:self.toggle_thumbnail_size()
+            elif name in ('Return','KP_Enter'):
+                if self.show_grid and self.files:self.open_thumb(self.selection.get_selected())
+                else:self.toggle_grid()
+            elif name=='question':self.popup('Simpleimage keys','n / Space: next · p / Backspace: previous\nh/j/k/l: pan (navigate in grid) · gg/G: first/last\n+/−: zoom · =: fit · 1: actual decoded size\nf: fullscreen · b: hide bars\nEnter: single image ↔ thumbnails · z: thumbnail size\nm: mark/unmark\ne: edit marked/current in Simplephoto · Ctrl+p: print\nr: reload\nR: rotate view · x: mirror view · s: slideshow\ny / Ctrl+x: copy paths · Y / Ctrl+c: copy image\ni: information · o: open · Esc/q: close\n\nRotation/mirroring affect the view only. Originals stay unchanged.')
+            elif name=='i':self.info()
+            elif name=='f':
+                self.full=not self.full
+                (self.win.fullscreen if self.full else self.win.unfullscreen)()
+            elif name=='b':
+                show=not self.bar.get_visible();self.bar.set_visible(show);self.status.set_visible(show)
+            elif name=='s':self.slideshow()
+            elif name=='r':self.refresh()
+            elif name=='m' and self.files:
+                path=self.files[self.selection.get_selected()] if self.show_grid else self.current()
+                if path in self.marked:self.marked.remove(path)
+                else:self.marked.add(path)
+                position=self.files.index(path);self.store.splice(position,1,[Item(path)]);self.selection.set_selected(position)
+                self.message(f'{len(self.marked)} marked')
+            elif name=='y' or (ctrl and name=='x'):
+                paths=[p for p in self.files if p in self.marked] or ([self.selected_path()] if self.selected_path() else [])
+                self.win.get_clipboard().set('\n'.join(map(str,paths)));self.message('Paths copied')
+            elif name=='Y' or (ctrl and name=='c'):
+                if self.pixbuf:self.win.get_clipboard().set(Gdk.Texture.new_for_pixbuf(self.displayed));self.message('Image copied (current decoded view)')
+            elif self.show_grid and self.files:
+                position=self.selection.get_selected();columns=self.columns
+                if name in ('h','j','k','l','n','p','space','BackSpace'):
+                    delta={'h':-1,'l':1,'j':columns,'k':-columns,'n':1,'p':-1,'space':1,'BackSpace':-1}[name];position=max(0,min(len(self.files)-1,position+delta));self.selection.set_selected(position);self.grid.scroll_to(position,Gtk.ListScrollFlags.FOCUS,None)
+                elif name in ('Return','KP_Enter'):self.open_thumb(position)
+                elif name=='G':self.selection.set_selected(len(self.files)-1);self.grid.scroll_to(len(self.files)-1,Gtk.ListScrollFlags.FOCUS,None)
+                elif name=='g':self.selection.set_selected(0);self.grid.scroll_to(0,Gtk.ListScrollFlags.FOCUS,None)
+                else:return False
+            elif name in ('n','space','Right'):self.show(self.index+1)
+            elif name in ('p','BackSpace','Left'):self.show(self.index-1)
+            elif name=='G':self.show(len(self.files)-1)
+            elif name=='g':
+                if self.prefix=='g':self.show(0);self.prefix=''
+                else:self.prefix='g'
+            elif name=='R':self.rotation=(self.rotation+90)%360;self.display()
+            elif name=='x':self.mirror=not self.mirror;self.display()
+            elif name in ('plus','minus','equal','1','KP_Add','KP_Subtract'):
+                if name=='equal':self.fit=True
+                else:
+                    self.fit=False;self.zoom=1 if name=='1' else max(.05,min(8,self.zoom*(1.25 if name in ('plus','KP_Add') else .8)))
+                self.layout()
+            elif name in ('h','j','k','l'):
+                adj=self.scroll.get_hadjustment() if name in ('h','l') else self.scroll.get_vadjustment();adj.set_value(adj.get_value()+(60 if name in ('j','l') else -60))
+            else:return False
+            return True
+    return Viewer().run([])
+
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('paths',nargs='*');parser.add_argument('--check-config',action='store_true');args=parser.parse_args();cfg=settings(not args.check_config)
+    if args.check_config:print('Simpleimage configuration OK');return 0
+    return gui(cfg,args)
+
+if __name__=='__main__':
+    try:sys.exit(main())
+    except (ValueError,OSError) as e:print('Simpleimage: '+str(e),file=sys.stderr);sys.exit(1)

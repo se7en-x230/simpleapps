@@ -158,7 +158,9 @@ def payload(stage,dirs,names,options,music,choices=None):
                 command,*arguments=shlex.split(line[5:])
                 executable=str(dirs['bin']/command)
                 escaped=executable.replace('\\','\\\\').replace('"','\\"').replace('`','\\`').replace('$','\\$').replace('%','%%')
-                line='Exec="'+escaped+'"'+(' '+' '.join(arguments) if arguments else '')
+                # xdg-utils first_word does not strip quotes around plain executable paths.
+                plain=all(c.isascii() and (c.isalnum() or c in '/._-') for c in executable)
+                line='Exec='+(executable if plain else '"'+escaped+'"')+(' '+' '.join(arguments) if arguments else '')
             lines.append(line)
         path.write_text('\n'.join(lines)+'\n')
     return files

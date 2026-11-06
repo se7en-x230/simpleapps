@@ -178,6 +178,9 @@ gboolean load_config(const char *override) {
   }
   gint64 idle=json_object_get_int64(obj(obj(config,"screensaver"),"idle_seconds"));
   if(idle<10 || idle>86400){fail("screensaver.idle_seconds must be between 10 and 86400");return FALSE;}
+  J *clip=obj(config,"clipboard");
+  gint64 cw=json_object_get_int64(obj(clip,"width")),ch=json_object_get_int64(obj(clip,"height"));
+  if(cw<320 || cw>2400 || ch<200 || ch>1600 || !*str(clip,"title")) {fail("Invalid clipboard title or dimensions");return FALSE;}
   gboolean keys[128] = {0};
   json_object_object_foreach(obj(config, "power"), name, a) {
     const char *ic = str(a, "icon");

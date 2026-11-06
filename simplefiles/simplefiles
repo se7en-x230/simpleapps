@@ -1,0 +1,398 @@
+#!/usr/bin/env python3
+"""Small GTK file chooser with Yazi-style navigation and portal compatibility."""
+import argparse
+import json
+import os
+from pathlib import Path
+import sys
+import stat
+import threading
+import shlex
+import tomllib
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
+
+
+def initial_location(value, save=False):
+    p = Path(value or Path.home()).expanduser().absolute()
+    if p.is_dir():
+        return p, ''
+    name = p.name if save else ''
+    parent = p.parent
+    while not parent.is_dir() and parent != parent.parent:
+        parent = parent.parent
+    return parent, name
+
+
+def chosen_paths(cwd, hovered, marked, directory=False, multiple=False):
+    if directory:
+        return [hovered if hovered is not None and hovered.is_dir() else cwd]
+    candidates = list(marked) if multiple and marked else ([hovered] if hovered else [])
+    if not candidates or any(not p.is_file() for p in candidates):
+        raise ValueError('Choose a file.' if not directory else 'Choose a folder.')
+    return candidates
+
+
+def save_target(cwd, name):
+    if not name.strip() or name in ('.', '..') or '/' in name or '\n' in name or '\r' in name:
+        raise ValueError('Enter a filename without a slash or line break.')
+    p = cwd / name
+    if p.is_dir():
+        raise ValueError('A folder already has that name.')
+    return p
+
+
+def write_result(paths, output=None):
+    # termfilechooser uses one path per line and cannot represent newlines.
+    if any('\n' in str(p) or '\r' in str(p) for p in paths):
+        raise ValueError('The file chooser portal cannot return names containing line breaks.')
+    result = ''.join(str(p.absolute()) + '\n' for p in paths)
+    if output:
+        Path(output).write_text(result)
+    else:
+        sys.stdout.write(result)
+
+
+def bookmarks():
+    home = Path.home()
+    result = {'h': home, 'd': home/'Downloads', 'D': home/'Documents', 'm': home/'Music', '/': Path('/'), 'c': home/'.config'}
+    config = Path(os.environ.get('XDG_CONFIG_HOME', home/'.config'))
+    try:
+        for line in (config/'user-dirs.dirs').read_text().splitlines():
+            if '=' not in line or line.lstrip().startswith('#'): continue
+            name, value = line.split('=', 1)
+            key = {'XDG_DOWNLOAD_DIR':'d', 'XDG_DOCUMENTS_DIR':'D', 'XDG_MUSIC_DIR':'m'}.get(name.strip())
+            if key:
+                parts = shlex.split(value)
+                if len(parts) == 1: result[key] = Path(parts[0].replace('$HOME', str(home))).expanduser()
+    except (OSError, ValueError): pass
+    try:
+        yazi = tomllib.loads((config/'yazi/keymap.toml').read_text())
+        for entry in yazi.get('mgr', {}).get('keymap', []):
+            keys, run = entry.get('on'), entry.get('run')
+            if not isinstance(keys, list) or len(keys) != 2 or keys[0] != 'g' or keys[1] == 'g' or not isinstance(run, str): continue
+            parts = shlex.split(run)
+            if len(parts) == 2 and parts[0] == 'cd' and not parts[1].startswith('-'):
+                result[keys[1]] = Path(os.path.expandvars(parts[1])).expanduser()
+    except (OSError, ValueError): pass
+    try:
+        overrides = json.loads((config/'simplefiles/config.json').read_text()).get('bookmarks', {})
+        for key, path in overrides.items():
+            if isinstance(key, str) and len(key) == 1 and key != 'g' and isinstance(path, str):
+                result[key] = Path(os.path.expandvars(path)).expanduser()
+    except (OSError, ValueError, AttributeError): pass
+    return result
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('path', nargs='?', default=str(Path.home()))
+    parser.add_argument('--multiple', action='store_true')
+    parser.add_argument('--directory', action='store_true')
+    parser.add_argument('--save', action='store_true')
+    parser.add_argument('--output')
+    args = parser.parse_args(argv)
+    if args.output:
+        Path(args.output).write_text('')
+    import gi
+    gi.require_version('Gtk', '4.0')
+    gi.require_version('GdkPixbuf', '2.0')
+    from gi.repository import Gtk, Gdk, GdkPixbuf, Gio, GLib, Pango
+
+    class Files(Gtk.Application):
+        def __init__(self):
+            super().__init__(application_id='space.go7.Simplefiles', flags=Gio.ApplicationFlags.NON_UNIQUE)
+            self.cwd, self.filename = initial_location(args.path, args.save)
+            self.marked = dict()
+            self.items = []
+            self.visible = []
+            self.bookmarks = bookmarks()
+            self.history = []
+            self.future = []
+            self.preview_pool = ThreadPoolExecutor(max_workers=2)
+            self.preview_timer = None
+            self.hidden = False
+            self.prefix = ''
+            self.generation = 0
+            self.preview_generation = 0
+            self.connect('activate', self.activate)
+
+        def activate(self, *_):
+            self.win = Gtk.ApplicationWindow(application=self, title='Simplefiles')
+            self.win.set_default_size(1000, 700)
+            self.win.add_css_class('simplefiles')
+            root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            for side in ('start', 'end', 'top', 'bottom'):
+                getattr(root, 'set_margin_' + side)(12)
+            self.win.set_child(root)
+            header = Gtk.Box(spacing=12)
+            name = Gtk.Label(label='Simplefiles'); name.add_css_class('title')
+            header.append(name)
+            mode = 'Save file' if args.save else 'Choose folder' if args.directory else 'Open files' if args.multiple else 'Open file'
+            header.append(Gtk.Label(label=mode, hexpand=True, xalign=0))
+            for label, action in [('Cancel', lambda *_: self.win.close()), ('Save' if args.save else 'Choose' if args.directory else 'Open', self.confirm)]:
+                button = Gtk.Button(label=label); button.connect('clicked', action); header.append(button)
+            root.append(header)
+            self.location = Gtk.Entry(text=str(self.cwd), placeholder_text='Location — Ctrl+l')
+            self.location.connect('activate', self.location_enter)
+            root.append(self.location)
+            self.search = Gtk.Entry(placeholder_text='Filter this folder — / or f')
+            self.search.connect('changed', lambda *_: self.populate())
+            self.search.connect('activate', lambda *_: self.list.grab_focus())
+            root.append(self.search)
+            split = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, vexpand=True)
+            split.set_position(560); root.append(split)
+            self.model = Gtk.StringList.new([])
+            self.selection = Gtk.SingleSelection.new(self.model)
+            factory = Gtk.SignalListItemFactory()
+            factory.connect('setup', lambda _, item: item.set_child(Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.MIDDLE)))
+            factory.connect('bind', lambda _, item: item.get_child().set_text(item.get_item().get_string()))
+            self.list = Gtk.ListView(model=self.selection, factory=factory)
+            self.selection.connect('notify::selected', lambda *_: self.preview(None, SimpleNamespace(path=self.hovered()) if self.hovered() else None))
+            self.list.connect('activate', lambda *_: self.enter())
+            self.scroll = Gtk.ScrolledWindow(hexpand=True, vexpand=True)
+            self.scroll.set_child(self.list); split.set_start_child(self.scroll)
+            preview_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            preview_box.set_margin_start(12)
+            self.picture = Gtk.Picture(can_shrink=True, vexpand=True)
+            self.picture.set_content_fit(Gtk.ContentFit.CONTAIN)
+            preview_box.append(self.picture)
+            self.info = Gtk.Label(wrap=True, xalign=0, selectable=True)
+            preview_box.append(self.info)
+            self.text = Gtk.TextView(editable=False, cursor_visible=False, monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR)
+            self.text_scroll = Gtk.ScrolledWindow(vexpand=True); self.text_scroll.set_child(self.text)
+            preview_box.append(self.text_scroll)
+            split.set_end_child(preview_box)
+            if args.save:
+                self.name = Gtk.Entry(text=self.filename, placeholder_text='Filename — i')
+                self.name.connect('activate', self.confirm); root.append(self.name)
+            self.status = Gtk.Label(xalign=0); root.append(self.status)
+            guide = Gtk.Label(label='h/j/k/l navigate · Space select · gg/G top/bottom · / filter · . hidden · g… folders · Ctrl+l path · Enter choose · ? keys', wrap=True, xalign=0)
+            guide.add_css_class('dim-label'); root.append(guide)
+            fallback = Gtk.CssProvider()
+            fallback.load_from_string('@define-color simple_bg #2a2a2a; @define-color simple_fg #e4ded2; @define-color simple_muted #928374; @define-color simple_heading #f3a40a; @define-color simple_button #3b3b3b; @define-color simple_hover #454545; @define-color simple_border #49454a; @define-color simple_accent #8B0000; @define-color simple_on_accent #fff5ef;')
+            display = Gdk.Display.get_default()
+            Gtk.StyleContext.add_provider_for_display(display, fallback, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            config = Path(os.environ.get('XDG_CONFIG_HOME', Path.home()/'.config'))/'simple'
+            data = Path(os.environ.get('XDG_DATA_HOME', Path.home()/'.local/share'))/'simple'
+            for path in (config/'aliases.css', config/'theme.css', data/'aliases.css', data/'theme.css'):
+                if path.is_file():
+                    provider = Gtk.CssProvider(); provider.load_from_path(str(path))
+                    Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION+1)
+                    break
+            css = Gtk.CssProvider()
+            css.load_from_string('window.simplefiles { background: @simple_bg; color: @simple_fg; } .simplefiles .title { color: @simple_heading; font-weight: bold; font-size: 18px; } .simplefiles listview { background: transparent; color: @simple_fg; } .simplefiles row { padding: 7px; } .simplefiles row:selected { background: @simple_accent; color: @simple_on_accent; } .simplefiles entry, .simplefiles textview text { background: @simple_button; color: @simple_fg; } .simplefiles button { background: @simple_button; color: @simple_fg; border: 1px solid @simple_border; border-radius: 9px; box-shadow: none; } .simplefiles button:hover { background: @simple_hover; } .simplefiles .dim-label { color: @simple_muted; opacity: 1; }')
+            Gtk.StyleContext.add_provider_for_display(display, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION+2)
+            # Keep the chooser selection visible even when a user GTK theme supplies row rules.
+            selection_css = Gtk.CssProvider()
+            selection_css.load_from_string('.simplefiles listview row:selected, .simplefiles listview row:selected:hover, .simplefiles listview row:selected:backdrop { background: @simple_accent; color: @simple_on_accent; } .simplefiles listview row:selected label { color: @simple_on_accent; }')
+            Gtk.StyleContext.add_provider_for_display(display, selection_css, Gtk.STYLE_PROVIDER_PRIORITY_USER+1)
+            keys = Gtk.EventControllerKey(); keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+            keys.connect('key-pressed', self.key); self.win.add_controller(keys)
+            self.win.present(); self.navigate(self.cwd, Path(args.path).expanduser().absolute())
+
+        def location_enter(self, *_):
+            p = Path(self.location.get_text()).expanduser()
+            if not p.is_absolute(): p = self.cwd/p
+            self.navigate(p)
+
+        def navigate(self, path, focus=None, remember=True):
+            path = Path(os.path.abspath(path))
+            self.generation += 1; generation = self.generation
+            self.status.set_text('Loading…')
+            def scan():
+                try:
+                    entries = []
+                    with os.scandir(path) as it:
+                        for e in it:
+                            try: entries.append((Path(e.path), e.is_dir()))
+                            except OSError: pass
+                    entries.sort(key=lambda e: (not e[1], e[0].name.casefold()))
+                    error = None
+                except OSError as exc: entries = []; error = str(exc)
+                def done():
+                    if generation != self.generation: return False
+                    if error: self.status.set_text(error); return False
+                    if remember and path != self.cwd:
+                        self.history.append(self.cwd); self.future.clear()
+                    self.cwd = path; self.items = entries
+                    self.location.set_text(str(path)); self.search.set_text('')
+                    self.populate(focus); self.list.grab_focus()
+                    return False
+                GLib.idle_add(done)
+            threading.Thread(target=scan, daemon=True).start()
+
+        def hovered(self):
+            index = self.selection.get_selected()
+            return self.visible[index] if index < len(self.visible) else None
+
+        def populate(self, focus=None):
+            focus = focus or self.hovered()
+            query = self.search.get_text().casefold()
+            entries = [(path, directory) for path, directory in self.items if (self.hidden or not path.name.startswith('.')) and query in path.name.casefold()]
+            self.visible = [path for path, directory in entries]
+            labels = [('✓ ' if path in self.marked else '  ') + path.name + ('/' if directory else '') for path, directory in entries]
+            self.model.splice(0, self.model.get_n_items(), labels)
+            index = self.visible.index(focus) if focus in self.visible else 0
+            self.selection.set_selected(index)
+            self.preview(None, SimpleNamespace(path=self.hovered()) if self.hovered() else None)
+            self.status.set_text(f'{len(entries)} entries · {len(self.marked)} selected')
+
+        def move(self, amount=None, end=False):
+            if not self.visible: return
+            index = self.selection.get_selected()
+            if index >= len(self.visible): index = 0
+            index = (len(self.visible)-1 if end else 0) if amount is None else max(0, min(len(self.visible)-1, index+amount))
+            self.selection.set_selected(index)
+            self.list.scroll_to(index, Gtk.ListScrollFlags.FOCUS, None)
+
+        def enter(self):
+            path = self.hovered()
+            if path is not None and path.is_dir(): self.navigate(path)
+            elif path is not None:
+                if args.save:
+                    self.name.set_text(path.name); self.name.grab_focus()
+                elif not args.directory: self.confirm()
+
+        def confirm(self, *_):
+            try:
+                if args.save:
+                    path = save_target(self.cwd, self.name.get_text())
+                    if path.exists() or path.is_symlink():
+                        dialog = Gtk.MessageDialog(transient_for=self.win, modal=True, text='Replace existing file?', secondary_text=path.name, buttons=Gtk.ButtonsType.YES_NO)
+                        def response(d, answer):
+                            d.destroy()
+                            if answer == Gtk.ResponseType.YES: self.finish([path])
+                        dialog.connect('response', response); dialog.present(); return
+                    paths = [path]
+                else:
+                    paths = chosen_paths(self.cwd, self.hovered(), self.marked, args.directory, args.multiple)
+                self.finish(paths)
+            except (OSError, ValueError) as exc: self.status.set_text(str(exc))
+
+        def finish(self, paths):
+            try: write_result(paths, args.output)
+            except (OSError, ValueError) as exc: self.status.set_text(str(exc)); return
+            self.win.close()
+
+        def preview(self, _list, row):
+            self.preview_generation += 1; generation = self.preview_generation
+            self.picture.set_paintable(None); self.picture.set_visible(False); self.text_scroll.set_visible(False)
+            if row is None: self.info.set_text('No matching files'); return
+            path = row.path; self.info.set_text(path.name)
+            def load():
+                if generation != self.preview_generation: return
+                pix = None; text = None
+                try:
+                    if path.is_dir():
+                        info = path.name + '\nFolder'
+                    else:
+                        st = path.stat()
+                        if not stat.S_ISREG(st.st_mode): raise OSError('Preview unavailable for special files')
+                        info = f'{path.name}\n{st.st_size:,} bytes'
+                        if path.suffix.lower() in ('.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tif', '.tiff'):
+                            pix = GdkPixbuf.Pixbuf.new_from_file_at_scale(str(path), 800, 650, True)
+                            pix = pix.apply_embedded_orientation()
+                        elif st.st_size < 2_000_000:
+                            with path.open('rb') as f: raw = f.read(16000)
+                            if b'\0' not in raw: text = raw.decode('utf-8', errors='replace')
+                except (OSError, GLib.Error) as exc: info = path.name + '\n' + str(exc)
+                def done():
+                    if generation != self.preview_generation: return False
+                    self.info.set_text(info)
+                    if pix:
+                        self.picture.set_paintable(Gdk.Texture.new_for_pixbuf(pix)); self.picture.set_visible(True)
+                    if text is not None:
+                        self.text.get_buffer().set_text(text); self.text_scroll.set_visible(True)
+                    return False
+                GLib.idle_add(done)
+            if self.preview_timer: GLib.source_remove(self.preview_timer)
+            def dispatch():
+                self.preview_timer = None
+                self.preview_pool.submit(load)
+                return False
+            self.preview_timer = GLib.timeout_add(90, dispatch)
+
+        def mkdir(self):
+            dialog = Gtk.Dialog(title='New folder', transient_for=self.win, modal=True)
+            dialog.add_button('Cancel', Gtk.ResponseType.CANCEL); dialog.add_button('Create', Gtk.ResponseType.OK)
+            entry = Gtk.Entry(placeholder_text='Folder name'); dialog.get_content_area().append(entry)
+            def response(d, answer):
+                if answer == Gtk.ResponseType.OK:
+                    try:
+                        target = save_target(self.cwd, entry.get_text()); target.mkdir()
+                        self.navigate(self.cwd, target)
+                    except (ValueError, OSError) as exc:
+                        self.status.set_text(str(exc))
+                d.destroy()
+            entry.connect('activate', lambda *_: dialog.response(Gtk.ResponseType.OK))
+            dialog.connect('response', response); dialog.present(); entry.grab_focus()
+
+        def typing(self):
+            widget = self.win.get_focus()
+            while widget:
+                if isinstance(widget, (Gtk.Entry, Gtk.TextView)): return True
+                widget = widget.get_parent()
+            return False
+
+        def key(self, controller, key, code, state):
+            ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
+            if state & (Gdk.ModifierType.ALT_MASK | Gdk.ModifierType.SUPER_MASK): return False
+            if key == Gdk.KEY_Escape:
+                self.prefix = ''
+                if self.typing(): self.list.grab_focus()
+                elif self.search.get_text(): self.search.set_text('')
+                elif self.marked: self.marked.clear(); self.populate()
+                else: self.win.close()
+                return True
+            if ctrl and key == Gdk.KEY_l:
+                self.location.grab_focus(); self.location.select_region(0, -1); return True
+            if self.typing(): return False
+            char = chr(Gdk.keyval_to_unicode(key)) if Gdk.keyval_to_unicode(key) else ''
+            if self.prefix:
+                prefix = self.prefix; self.prefix = ''
+                if prefix == 'm':
+                    if char == 'd': self.mkdir()
+                    return True
+                if char == 'g': self.move(); return True
+                if char in self.bookmarks: self.navigate(self.bookmarks[char])
+                return True
+            if ctrl and key in (Gdk.KEY_o, Gdk.KEY_i):
+                source, target = (self.history, self.future) if key == Gdk.KEY_o else (self.future, self.history)
+                if source:
+                    target.append(self.cwd); self.navigate(source.pop(), remember=False)
+            elif ctrl and key in (Gdk.KEY_j, Gdk.KEY_k):
+                adjustment = self.text_scroll.get_vadjustment()
+                adjustment.set_value(adjustment.get_value() + (100 if key == Gdk.KEY_j else -100))
+            elif ctrl and key in (Gdk.KEY_d, Gdk.KEY_u): self.move(10 if key == Gdk.KEY_d else -10)
+            elif ctrl: return False
+            elif key in (Gdk.KEY_j, Gdk.KEY_Down): self.move(1)
+            elif key in (Gdk.KEY_k, Gdk.KEY_Up): self.move(-1)
+            elif key in (Gdk.KEY_h, Gdk.KEY_Left, Gdk.KEY_BackSpace): self.navigate(self.cwd.parent, self.cwd)
+            elif key in (Gdk.KEY_l, Gdk.KEY_Right): self.enter()
+            elif key in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+                if not args.directory and not args.save and self.hovered() and self.hovered().is_dir(): self.enter()
+                else: self.confirm()
+            elif key == Gdk.KEY_space:
+                path = self.hovered()
+                if args.multiple and not args.directory and not args.save and path and path.is_file():
+                    if path in self.marked: del self.marked[path]
+                    else: self.marked[path] = None
+                    self.populate(); self.move(1)
+            elif char == 'g': self.prefix = 'g'; self.status.set_text('g: g top · ' + ' · '.join(key+' '+str(path).replace(str(Path.home()), '~', 1) for key,path in self.bookmarks.items()))
+            elif char == 'm': self.prefix = 'm'; self.status.set_text('md: create folder')
+            elif char == 'G': self.move(end=True)
+            elif char == '.': self.hidden = not self.hidden; self.populate()
+            elif char in ('/', 'f'): self.search.grab_focus()
+            elif char == 'i' and args.save: self.name.grab_focus(); self.name.select_region(0, -1)
+            elif char == 'q': self.win.close()
+            elif char == '?':
+                dialog = Gtk.MessageDialog(transient_for=self.win, modal=True, buttons=Gtk.ButtonsType.CLOSE, text='Simplefiles keys', secondary_text='h/l: parent / enter folder or choose file\nj/k: move · gg/G: first/last · Ctrl+u/d: jump 10 rows\nSpace: mark files in multiple selection dialogs\n/: filter · .: hidden files · Ctrl+l: location\ng + key: folder bookmarks from your Yazi config\nCtrl+o/i: back/forward · Ctrl+j/k: scroll text preview\nmd: create folder · Enter: choose file/folder or save\ni: edit save filename\nEsc: leave typing, clear filter/selection, then cancel\nq: cancel')
+                dialog.connect('response', lambda d, *_: d.destroy()); dialog.present()
+            else: return False
+            return True
+
+    return Files().run([])
+
+if __name__ == '__main__':
+    raise SystemExit(main())

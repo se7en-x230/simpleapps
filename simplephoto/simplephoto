@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Conservative local enhancement; save a separate SDR copy."""
 from pathlib import Path
-import os,re,sys,tempfile,threading,io,argparse
+import os,re,sys,tempfile,threading,io,argparse,json
 import numpy as np
 from PIL import Image,ImageOps,ImageCms,ImageFilter,ImageDraw
 
@@ -155,6 +155,7 @@ UI_CONTROLS=(*CONTROLS,'Portrait blur','Zoom')
 def main(argv):
     parser=argparse.ArgumentParser(description='SimplePhoto: crop and adjust photos; save a separate copy.')
     parser.add_argument('--crop',action='store_true',help='Start in crop mode')
+    parser.add_argument('--saved-events',action='store_true',help='Emit JSON saved-file events on stdout for viewer integration')
     parser.add_argument('files',nargs='*');args=parser.parse_args(argv)
     import gi
     gi.require_version('Gtk','4.0')
@@ -396,7 +397,8 @@ def main(argv):
         def focus_layout(self):
             self.release_zoom();focused=self.brush_mode or self.crop_mode
             self.brush_tools.set_visible(self.brush_mode);self.crop_tools.set_visible(self.crop_mode)
-            for widget in (self.header,self.controls):widget.set_visible(not focused)
+            self.header.set_visible(True)
+            self.controls.set_visible(not focused)
             self.status.set_visible(False)
             self.footer.set_visible(True)
             if self.crop_mode:
@@ -531,6 +533,8 @@ def main(argv):
             if self.busy or self.data is None:return
             settings=self.settings();rect=self.rect;self.show_status('Saving full-resolution copy…')
             self.work(lambda:save(self.path,self.data,settings,rect,self.mask),self.saved)
-        def saved(self,p):print(p,flush=True);self.show_status('Saved '+p.name)
+        def saved(self,p):
+            print(json.dumps({'event':'saved','path':str(p)}) if args.saved_events else p,flush=True)
+            self.show_status('Saved '+p.name)
     return App().run([sys.argv[0]])
 if __name__=='__main__':raise SystemExit(main(sys.argv[1:]))

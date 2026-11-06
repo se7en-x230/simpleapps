@@ -1,0 +1,11 @@
+#!/bin/sh
+# xdg-desktop-portal-termfilechooser: multiple directory save path output debug
+set -eu
+multiple="$1" directory="$2" save="$3" path="$4" output="$5"
+: > "$output"
+bindir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+set -- --output "$output"
+[ "$multiple" != 1 ] || set -- "$@" --multiple
+[ "$directory" != 1 ] || set -- "$@" --directory
+[ "$save" != 1 ] || set -- "$@" --save
+exec "$bindir/simplefiles" "$@" -- "$path"

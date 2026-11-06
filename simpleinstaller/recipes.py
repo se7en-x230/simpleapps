@@ -19,7 +19,7 @@ def source_ignore(directory,names):
                 if f.read(4)==b'\x7fELF':result.append(name)
     return result
 
-def roots_for(names):return list(dict.fromkeys([*names,'simple-common',*(['simplepicker'] if 'simple-tools' in names else [])]))
+def roots_for(names):return list(dict.fromkeys([*names,'simple-common',*(['simplepicker'] if set(names)&{'simple-tools','simpleclip'} else [])]))
 
 def put(source,target,mode=None):
     target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source,target)
@@ -46,7 +46,7 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
     for name in names:
         before={p for p in stage.rglob('*') if p.is_file()}
         src=work/name;recipe=catalog[name]['recipe'];target=share/name
-        if recipe not in ('wallpaper','tools','photo'):
+        if recipe not in ('wallpaper','tools','photo','files','notes','clip','capture','timer','pdf','image'):
             print('\nBuilding '+catalog[name]['name']+'…',flush=True)
             subprocess.run(['make','-C',str(src),'-j2'],env=env,check=True)
         if recipe=='player':
@@ -74,6 +74,29 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
                 write(bins/'simplepanel-dashboard','#!/bin/sh\nbindir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexport PATH="$bindir:$PATH"\nexec "$bindir/simplepanel" --system-dashboard "$@"\n',0o755)
             if recipe=='lock':put(src/'lock.toml',target/'lock.toml')
             if recipe=='torrent':shutil.copytree(src/'defaults',target/'defaults')
+        elif recipe=='clip':
+            picker=work/'simplepicker'
+            subprocess.run(['make','-C',str(picker),'-j2'],env=env,check=True)
+            put(picker/'simplepicker-native',bins/'simpleclip-native',0o755)
+            put(src/'simpleclip',bins/'simpleclip',0o755)
+            for filename in ('defaults.json',):put(picker/'assets'/filename,target/filename)
+            for filename in ('config.toml','keys.ini'):put(src/filename,target/filename)
+            for filename in ('style.css','status-colors.css'):put(here/'defaults'/('picker-'+filename),target/filename)
+            write(target/'wtype','#!/bin/sh\nexec wtype "$@"\n',0o755)
+        elif recipe=='capture':
+            put(src/'simplecapture',bins/'simplecapture',0o755)
+            put(src/'record.sh',target/'record.sh',0o755)
+        elif recipe=='image':
+            put(src/'simpleimage',bins/'simpleimage',0o755)
+        elif recipe=='pdf':
+            put(src/'simplepdf',bins/'simplepdf',0o755)
+            put(src/'pdf_tools.py',target/'pdf_tools.py')
+        elif recipe=='timer':
+            put(src/'simpletimer',bins/'simpletimer',0o755)
+        elif recipe=='notes':
+            put(src/'simplenotes',bins/'simplenotes',0o755)
+        elif recipe=='files':
+            for filename in ('simplefiles','simplefiles-portal'):put(src/filename,bins/filename,0o755)
         elif recipe=='photo':
             put(src/'simplephoto',bins/'simplephoto',0o755)
         elif recipe=='wallpaper':
@@ -94,11 +117,11 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
             # Shared Python menu helpers, without requiring the Picker application.
             shutil.copytree(work/'simplepicker/python',share/'simplepicker/python',dirs_exist_ok=True,ignore=source_ignore)
         else:raise ValueError('Unknown install recipe: '+recipe)
-        command={'simplepanel':'simplepanel-dashboard','simple-tools':'simple-sound'}.get(name,name)
-        desktop(share/'applications'/(name+'.desktop'),catalog[name]['name'],command+' %F' if recipe=='photo' else command,category='Graphics;Photography' if recipe=='photo' else 'Utility')
+        command={'simplepanel':'simplepanel-dashboard','simple-tools':'simple-sound','simplecapture':'simplecapture --menu'}.get(name,name)
+        desktop(share/'applications'/(name+'.desktop'),catalog[name]['name'],command+' %F' if recipe in ('photo','pdf','image') else command,category='Graphics;Photography' if recipe in ('photo','image') else 'Office' if recipe=='pdf' else 'Utility')
         for p in stage.rglob('*'):
             if p.is_file() and p not in before:owners[p]={name}
-    if set(names)=={'simplephoto'}:return owners
+    if set(names)<={'simplephoto','simplefiles','simplenotes','simplecapture','simpletimer','simplepdf','simpleimage'}:return owners
     before={p for p in stage.rglob('*') if p.is_file()}
     for p in (root/'simple-common').glob('*.py'):put(p,share/'simple-common'/p.name)
     for p in (root/'simple-common/assets/images').glob('*.png'):put(p,share/'simple/images'/p.name)
@@ -107,7 +130,7 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
 
     for p in stage.rglob('*'):
         if not p.is_file():continue
-        if p not in before:owners[p]=set(names)-{'simplephoto'}
+        if p not in before:owners[p]=set(names)-{'simplephoto','simplefiles','simplenotes','simplecapture','simpletimer','simplepdf','simpleimage'}
         rel=p.relative_to(stage).parts
         if (rel[:3] in (('.local','share','simplepicker'),('.local','lib','simplepicker')) or p==bins/'simplepicker-native'):
             owners[p]=set(names)&{'simplepicker','simple-tools'}

@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+"""Portable grim/slurp screenshot workflow with Swappy annotation."""
+import argparse
+import configparser
+from datetime import datetime
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import tomllib
+
+DEFAULTS=dict(mode='region',edit=True,copy=True,save=False,delay_seconds=0,settle_ms=300,notify=True,cancel_action='cancel',record_dir='~/Videos/Recordings',record_mode='region',recorder='wf-recorder',record_audio=True,record_audio_device='',record_copy=True)
+PNG=b'\x89PNG\r\n\x1a\n'
+
+
+def config_path():return Path(os.environ.get('XDG_CONFIG_HOME',Path.home()/'.config'))/'simplecapture/config.toml'
+
+
+def load_config():
+    path=config_path()
+    if not path.exists():
+        import gi
+        from gi.repository import GLib
+        pictures=GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES) or str(Path.home()/'Pictures')
+        destination=Path(pictures)/'Screenshots'
+        # Migrate only the save location from an existing Swappy setup.
+        old=configparser.ConfigParser(interpolation=None)
+        old.read(path.parent.parent/'swappy/config')
+        value=old.get('Default','save_dir',fallback='')
+        if value:destination=Path(os.path.expandvars(value)).expanduser()
+        try:value='~/'+str(destination.relative_to(Path.home()))
+        except ValueError:value=str(destination)
+        path.parent.mkdir(parents=True,exist_ok=True)
+        text='# Simplecapture. Paths support ~ and environment variables.\n# Swappy Save uses save_dir; save=true also saves automatically after editing.\nsave_dir = '+json.dumps(value)+'\n'
+        text+='# Cancel selection: "cancel" closes, "fullscreen" captures the whole desktop.\n'
+        text+=''.join(k+' = '+json.dumps(v)+'\n' for k,v in DEFAULTS.items())
+        try:
+            with path.open('x') as f:f.write(text)
+        except FileExistsError:pass
+    data=tomllib.loads(path.read_text())
+    unknown=data.keys()-(DEFAULTS.keys()|{'save_dir'})
+    if unknown:raise ValueError('Unknown capture setting: '+', '.join(sorted(unknown)))
+    config=DEFAULTS|data
+    for key in ('edit','copy','save','notify','record_audio','record_copy'):
+        if type(config[key]) is not bool:raise ValueError(key+' must be true or false')
+    for key,maximum in [('delay_seconds',60),('settle_ms',3000)]:
+        if type(config[key]) is not int or not 0<=config[key]<=maximum:raise ValueError(f'{key} must be an integer from 0 to {maximum}')
+    if config['mode'] not in ('region','fullscreen'):raise ValueError('mode must be region or fullscreen')
+    if config['cancel_action'] not in ('cancel','fullscreen'):raise ValueError('cancel_action must be cancel or fullscreen')
+    value=config.get('save_dir')
+    if not isinstance(value,str) or not value.strip():raise ValueError('save_dir must be a directory path')
+    target=Path(os.path.expandvars(value)).expanduser()
+    config['save_dir']=target if target.is_absolute() else path.parent/target
+    if config['record_mode'] not in ('region','fullscreen'):raise ValueError('record_mode must be region or fullscreen')
+    if config['recorder'] not in ('wf-recorder','wl-screenrec'):raise ValueError('recorder must be wf-recorder or wl-screenrec')
+    if not isinstance(config['record_audio_device'],str):raise ValueError('record_audio_device must be a string')
+    value=config['record_dir']
+    if not isinstance(value,str) or not value.strip():raise ValueError('record_dir must be a directory path')
+    target=Path(os.path.expandvars(value)).expanduser()
+    config['record_dir']=target if target.is_absolute() else path.parent/target
+    return config
+
+
+def record(config):
+    base=Path(__file__).resolve().parent
+    helper=next((p for p in (base/'record.sh',base.parent/'share/simplecapture/record.sh') if p.is_file()),None)
+    if helper is None:raise RuntimeError('Recording helper missing; reinstall Simplecapture')
+    runtime=Path(os.environ.get('XDG_RUNTIME_DIR',f'/run/user/{os.getuid()}'))
+    env=dict(os.environ,WFRC_FOLDER=str(config['record_dir']),WFRC_LOCK=str(runtime/'simplecapture-recording.pid'),
+             SCRIPT_NAME='Simplecapture',WFRC_RECORDER=config['recorder'],WFRC_NOTIFY='1' if config['notify'] else '0',
+             WFRC_FULL_SCREEN='1' if config['record_mode']=='fullscreen' else '0',WFRC_AUDIO='1' if config['record_audio'] else '0',
+             WFRC_AUDIO_DEV=config['record_audio_device'],WFRC_COPY='1' if config['record_copy'] else '0',
+             WFRC_DELAY=str(config['delay_seconds']+config['settle_ms']/1000))
+    env.pop('WFRC_FILE_NAME',None)
+    os.execvpe('bash',['bash',str(helper)],env)
+
+
+def notify(config,title,message):
+    if config['notify'] and shutil.which('notify-send'):
+        try:subprocess.run(['notify-send','-a','Simplecapture','-i','camera-photo',title,message],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=5)
+        except (OSError,subprocess.SubprocessError):pass
+
+
+def run(command,**kwargs):
+    result=subprocess.run(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,**kwargs)
+    if result.returncode:raise RuntimeError(Path(command[0]).name+': '+result.stderr.decode(errors='replace').strip())
+    return result.stdout
+
+
+def save_png(folder,content):
+    folder.mkdir(parents=True,exist_ok=True)
+    stamp=datetime.now().strftime('Screenshot-%Y%m%d-%H%M%S-%f')
+    for i in range(1000):
+        path=folder/(stamp+('' if i==0 else f'-{i}')+'.png')
+        try:
+            with path.open('xb') as f:f.write(content)
+            return path
+        except FileExistsError:continue
+    raise OSError('Could not choose a unique screenshot filename')
+
+
+def capture(config):
+    required=['grim']+(['slurp'] if config['mode']=='region' else [])+(['swappy'] if config['edit'] else [])+(['wl-copy'] if config['copy'] else [])
+    for command in required:
+        if not shutil.which(command):raise RuntimeError('Missing dependency: '+command)
+    geometry=None
+    if config['mode']=='region':
+        result=subprocess.run(['slurp','-d','-b','00000000','-s','00000000','-B','00000000'],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        if result.returncode or not result.stdout.strip():
+            if config['cancel_action']=='cancel':return None
+        else:
+            geometry=result.stdout.decode().strip()
+            if not re.fullmatch(r'-?\d+,-?\d+ [1-9]\d*x[1-9]\d*',geometry):raise ValueError('Invalid selection geometry')
+    time.sleep(config['delay_seconds']+config['settle_ms']/1000)
+    content=run(['grim',*(['-g',geometry] if geometry else []),'-'])
+    if not content.startswith(PNG):raise ValueError('Capture did not produce a PNG')
+    if config['edit']:
+        with tempfile.TemporaryDirectory(prefix='simplecapture-') as tmp:
+            base=Path(tmp);image=base/'capture.png';image.write_bytes(content)
+            # Override only Swappy's settings for this invocation, keeping GTK styling.
+            original=Path(os.environ.get('XDG_CONFIG_HOME',Path.home()/'.config'))
+            conf=base/'config';(conf/'swappy').mkdir(parents=True)
+            for name in ('gtk-3.0','gtk-4.0','simple'):
+                if (original/name).exists():(conf/name).symlink_to(original/name,target_is_directory=True)
+            swappy=configparser.ConfigParser(interpolation=None);swappy.read(original/'swappy/config')
+            if not swappy.has_section('Default'):swappy.add_section('Default')
+            swappy.set('Default','save_dir',str(config['save_dir']))
+            swappy.set('Default','save_filename_format','Screenshot-%Y%m%d-%H%M%S.png')
+            swappy.set('Default','auto_save','false')
+            with (conf/'swappy/config').open('w') as f:swappy.write(f)
+            content=run(['swappy','-f',str(image),'-o','-'],env=dict(os.environ,XDG_CONFIG_HOME=str(conf)))
+        if not content:return None
+        if not content.startswith(PNG):raise ValueError('Editor did not return a PNG')
+    saved=save_png(config['save_dir'],content) if config['save'] else None
+    if config['copy']:run(['wl-copy','--type','image/png'],input=content)
+    message=('Copied to clipboard' if config['copy'] else 'Capture complete')+(f' · {saved}' if saved else '')
+    notify(config,'Simplecapture',message)
+    return saved or True
+
+
+def menu(config):
+    import gi
+    gi.require_version('Gtk','4.0')
+    from gi.repository import Gtk,Gdk,Gio
+    result=[]
+    class App(Gtk.Application):
+        def __init__(self):
+            super().__init__(application_id='space.go7.Simplecapture',flags=Gio.ApplicationFlags.NON_UNIQUE);self.connect('activate',self.activate)
+        def activate(self,*_):
+            self.win=Gtk.ApplicationWindow(application=self,title='Simplecapture');self.win.set_default_size(470,320)
+            self.win.add_css_class('simplecapture')
+            box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=10)
+            for side in ('start','end','top','bottom'):getattr(box,'set_margin_'+side)(16)
+            self.win.set_child(box)
+            title=Gtk.Label(label='Simplecapture',xalign=0);title.add_css_class('heading');box.append(title)
+            for label,mode,edit in [('Region [r]','region',config['edit']),('Full desktop [f]','fullscreen',config['edit']),('Quick region · no editor [c]','region',False),('Quick desktop · no editor [a]','fullscreen',False)]:
+                button=Gtk.Button(label=label);button.connect('clicked',lambda _,m=mode,e=edit:self.choose(m,e));box.append(button)
+            button=Gtk.Button(label='Record / stop [v]');button.connect('clicked',lambda *_:self.record());box.append(button)
+            box.append(Gtk.Label(label='v record · j/k move · r/f capture · c/a quick · Esc/q close',xalign=0))
+            css=Gtk.CssProvider();css.load_from_string('@define-color simple_bg #2a2a2a; @define-color simple_fg #e4ded2; @define-color simple_heading #f3a40a; @define-color simple_button #3b3b3b; @define-color simple_accent #8b0000; @define-color simple_on_accent #fff5ef;')
+            display=Gdk.Display.get_default();Gtk.StyleContext.add_provider_for_display(display,css,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            config_dir=Path(os.environ.get('XDG_CONFIG_HOME',Path.home()/'.config'))/'simple'
+            data=Path(os.environ.get('XDG_DATA_HOME',Path.home()/'.local/share'))/'simple'
+            for path in (config_dir/'aliases.css',config_dir/'theme.css',data/'aliases.css',data/'theme.css'):
+                if path.is_file():
+                    css=Gtk.CssProvider();css.load_from_path(str(path));Gtk.StyleContext.add_provider_for_display(display,css,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION+1);break
+            css=Gtk.CssProvider();css.load_from_string('.simplecapture {background:@simple_bg;color:@simple_fg;} .simplecapture .heading {color:@simple_heading;font-size:18px;font-weight:bold;} .simplecapture button {background:@simple_button;color:@simple_fg;border-radius:8px;padding:10px;} .simplecapture button:focus {background:@simple_accent;color:@simple_on_accent;}')
+            Gtk.StyleContext.add_provider_for_display(display,css,Gtk.STYLE_PROVIDER_PRIORITY_USER+1)
+            controller=Gtk.EventControllerKey();controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE);controller.connect('key-pressed',self.key);self.win.add_controller(controller)
+            self.win.present()
+        def choose(self,mode,edit):result.append(config|dict(mode=mode,edit=edit));self.win.close()
+        def record(self):result.append(config|{'_record':True});self.win.close()
+        def key(self,controller,key,code,state):
+            if key in (Gdk.KEY_Escape,Gdk.KEY_q):self.win.close();return True
+            if key==Gdk.KEY_v:self.record();return True
+            options={Gdk.KEY_r:('region',config['edit']),Gdk.KEY_f:('fullscreen',config['edit']),Gdk.KEY_c:('region',False),Gdk.KEY_a:('fullscreen',False)}
+            if key in options:self.choose(*options[key]);return True
+            if key in (Gdk.KEY_j,Gdk.KEY_k):self.win.child_focus(Gtk.DirectionType.TAB_FORWARD if key==Gdk.KEY_j else Gtk.DirectionType.TAB_BACKWARD);return True
+            return False
+    App().run([])
+    return result[0] if result else None
+
+
+def main(argv=None):
+    parser=argparse.ArgumentParser(description=__doc__)
+    modes=parser.add_mutually_exclusive_group();modes.add_argument('-f','--fullscreen',action='store_true');modes.add_argument('--region',action='store_true')
+    parser.add_argument('--record',action='store_true');parser.add_argument('--menu',action='store_true');parser.add_argument('--no-edit',action='store_true');parser.add_argument('--save',action='store_true');parser.add_argument('--no-copy',action='store_true');parser.add_argument('--delay',type=int);parser.add_argument('--check-config',action='store_true')
+    args=parser.parse_args(argv)
+    try:
+        config=load_config()
+        if args.check_config:print(config_path());return 0
+        if args.fullscreen:config['mode']='fullscreen'
+        if args.region:config['mode']='region'
+        if args.no_edit:config['edit']=False
+        if args.save:config['save']=True
+        if args.no_copy:config['copy']=False
+        if args.delay is not None:
+            if not 0<=args.delay<=60:raise ValueError('delay must be between 0 and 60 seconds')
+            config['delay_seconds']=args.delay
+        if args.record:
+            if args.fullscreen:config['record_mode']='fullscreen'
+            elif args.region:config['record_mode']='region'
+            if args.no_copy:config['record_copy']=False
+            record(config)
+        if not config['edit'] and not config['save'] and not config['copy']:raise ValueError('Enable copy or save when capturing without an editor')
+        if args.menu:
+            config=menu(config)
+            if config is None:return 0
+            if config.get('_record'):record(config)
+        if not config['edit'] and not config['save'] and not config['copy']:raise ValueError('Quick capture needs copy or save enabled')
+        capture(config);return 0
+    except (OSError,ValueError,RuntimeError,subprocess.SubprocessError) as exc:
+        print('Simplecapture: '+str(exc),file=sys.stderr)
+        if 'config' in locals() and config:notify(config,'Screenshot failed',str(exc))
+        return 1
+if __name__=='__main__':raise SystemExit(main())
