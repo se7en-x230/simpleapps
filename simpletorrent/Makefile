@@ -13,3 +13,5 @@ install: all
 clean:
 	rm -f simpletorrent
 .PHONY: all install clean
+
+simpletorrent: ../simple-common/simple-keyboard.h

@@ -60,3 +60,6 @@ dashboard.o: ../simple-common/daylight-art.h
 $(OBJECTS): ../simple-common/simple-theme.h
 
 dashboard.o: ../simple-common/simple-images.h ../simple-common/daylight-art.h
+
+
+ui.o: ../simple-common/simple-keyboard.h

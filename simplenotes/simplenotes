@@ -148,6 +148,19 @@ class Notes:
         return sorted(entries, key=lambda item: str(item[0].relative_to(self.root)).casefold())
 
 
+# Resolve the shared keyboard helper both from a checkout and an installed prefix.
+from pathlib import Path as _KeyboardPath
+import sys as _keyboard_sys
+import os as _keyboard_os
+for _keyboard_root in (_KeyboardPath(__file__).resolve().parent.parent / 'simple-common',
+                       _KeyboardPath(__file__).resolve().parent.parent / 'share/simple-common',
+                       _KeyboardPath(_keyboard_os.environ.get('XDG_DATA_HOME', _KeyboardPath.home()/'.local/share')) / 'simple-common'):
+    if (_keyboard_root / 'simple_keyboard.py').is_file():
+        _keyboard_sys.path.insert(0, str(_keyboard_root))
+        break
+from simple_keyboard import control_key, dialog_keys
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--notes-dir')
@@ -343,6 +356,7 @@ def main(argv=None):
 
         def ask_name(self,title,callback,initial=''):
             dialog=Gtk.Dialog(title=title,transient_for=self.win,modal=True)
+            dialog_keys(dialog)
             dialog.add_button('Cancel',Gtk.ResponseType.CANCEL);dialog.add_button('Create',Gtk.ResponseType.OK)
             entry=Gtk.Entry(text=initial,placeholder_text='Folder/Note.md');entry.set_size_request(420,-1)
             error=Gtk.Label(wrap=True,xalign=0)
@@ -414,9 +428,14 @@ def main(argv=None):
 
         def help(self,*_):
             dialog=Gtk.MessageDialog(transient_for=self.win,modal=True,buttons=Gtk.ButtonsType.CLOSE,text='Simplenotes keys',secondary_text='LIST: j/k or arrows select · gg/G first/last · Ctrl+u/d jump · l preview · i/Enter edit · / search · Esc close\n\nNOTES: n new · Shift+n new folder · p new from clipboard · a append clipboard · y copy text · Shift+y copy file reference · Shift+r recover draft · Ctrl+r refresh\n\nEDITOR: i enters text editing; type normally. Ctrl+Enter returns to notes. Esc closes and saves. Ctrl+s save · Ctrl+Shift+s save copy · Ctrl+z undo · Ctrl+Shift+z redo · Ctrl+a/c/v select/copy/paste\n\nPreview uses h/j/k/l to move and gg/G for start/end. Esc closes; q also closes outside text entry. Notes autosave after a short pause. External changes are never silently overwritten.')
+            dialog_keys(dialog)
             dialog.connect('response',lambda d,*_:d.destroy());dialog.present()
 
         def key(self,controller,key,code,state):
+            handled = control_key(self.win, key, state)
+            if handled is not None:
+                if hasattr(self, 'prefix'): self.prefix = ''
+                return handled
             ctrl=bool(state&Gdk.ModifierType.CONTROL_MASK);shift=bool(state&Gdk.ModifierType.SHIFT_MASK)
             if state&(Gdk.ModifierType.ALT_MASK|Gdk.ModifierType.SUPER_MASK):return False
             if ctrl and key in (Gdk.KEY_s,Gdk.KEY_S):

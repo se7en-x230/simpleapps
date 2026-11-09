@@ -27,3 +27,8 @@ The main editor has two rows of five sliders, including view-only Zoom (100–40
 Use the rotation and mirror shortcuts in the bottom guide: `t`/`Shift+t` rotate right/left; `x`/`Shift+x` mirror left/right or top/bottom.
 
 When launched from [Simpleimage](simpleimage.md), saving notifies the viewer immediately and selects the new numbered copy. Save remains visible in crop and blur modes.
+
+In blur mode, arrow keys move the brush cursor (`Ctrl` for one-pixel steps).
+`p` paints at the cursor, `Shift+p` erases, and `u` undoes. The existing mouse
+brush and keyboard crop/adjustment controls remain available. Use `Tab` /
+`Shift+Tab` for controls and `Enter` / `Space` for focused buttons.

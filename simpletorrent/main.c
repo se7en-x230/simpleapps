@@ -1,3 +1,4 @@
+#include "../simple-common/simple-keyboard.h"
 #include <gtk/gtk.h>
 #include <curl/curl.h>
 #include <json-c/json.h>
@@ -196,6 +197,9 @@ static void browse(GtkButton *b,gpointer d){GtkFileDialog *f=gtk_file_dialog_new
 static void move(int delta){Row *r=current();int i=r?gtk_list_box_row_get_index(GTK_LIST_BOX_ROW(r->row)):(delta>0?-1:(int)rows->len);for(i+=delta;i>=0&&i<(int)rows->len;i+=delta){GtkListBoxRow *next=gtk_list_box_get_row_at_index(GTK_LIST_BOX(list),i);if(gtk_widget_get_child_visible(GTK_WIDGET(next))){gtk_list_box_select_row(GTK_LIST_BOX(list),next);gtk_widget_grab_focus(GTK_WIDGET(next));break;}}}
 static gboolean matches(guint key,GdkModifierType mods,const char *group,const char *name,const char *fallback){char *value=g_key_file_get_string(keys,group,name,NULL);char **parts=g_strsplit(value?value:fallback,",",-1);gboolean found=FALSE;for(int i=0;parts[i];i++){guint k;GdkModifierType m;if(gtk_accelerator_parse(g_strstrip(parts[i]),&k,&m)&&gdk_keyval_to_lower(key)==k&&(mods&gtk_accelerator_get_default_mod_mask())==m)found=TRUE;}g_strfreev(parts);g_free(value);return found;}
 static gboolean keypress(GtkEventControllerKey *c,guint key,guint code,GdkModifierType mods,gpointer d){
+
+    int control_result=simple_control_key(GTK_WINDOW(win),key,mods);
+    if(control_result>=0)return control_result;
     GtkWidget *focus=gtk_window_get_focus(GTK_WINDOW(win));
     if(focus&&(GTK_IS_EDITABLE(focus)||GTK_IS_TEXT(focus))){if(key==GDK_KEY_Escape){gtk_editable_set_text(GTK_EDITABLE(search),"");gtk_widget_set_visible(search,FALSE);if(current())gtk_widget_grab_focus(current()->row);else gtk_widget_grab_focus(list);return TRUE;}return FALSE;}
     if(matches(key,mods,"navigation","down","j,Down"))move(1);

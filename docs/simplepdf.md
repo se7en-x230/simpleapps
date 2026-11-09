@@ -12,3 +12,6 @@ simplepdf
 
 See [features, configuration, dependencies and keyboard controls](../simplepdf/README.md).
 
+
+`t` opens the table of contents. `Tab` / `Shift+Tab` moves between controls;
+`Enter` or `Space` activates the focused button.

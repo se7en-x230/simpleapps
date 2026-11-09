@@ -1,3 +1,4 @@
+#include "simple-keyboard.h"
 #include "simple-paths.h"
 /* Native GTK organizers. Python helper owns provider authentication and data sync. */
 #include <gtk/gtk.h>
@@ -58,6 +59,7 @@ static gboolean escape_dialog(GtkEventControllerKey *c,guint key,guint code,GdkM
  if((state&GDK_CONTROL_MASK)&&(key==GDK_KEY_j||key==GDK_KEY_k)){gtk_widget_child_focus(GTK_WIDGET(w),key==GDK_KEY_j?GTK_DIR_TAB_FORWARD:GTK_DIR_TAB_BACKWARD);return TRUE;}
  GtkWidget *focus=gtk_window_get_focus(GTK_WINDOW(w));if((key==GDK_KEY_Return||key==GDK_KEY_KP_Enter)&&GTK_IS_BUTTON(focus)){gtk_widget_activate(focus);return TRUE;}return FALSE;}
 static gboolean dialog_focus_key(GtkEventControllerKey *c,guint key,guint code,GdkModifierType state,gpointer w){
+ int result=simple_control_key(GTK_WINDOW(w),key,state);if(result>=0)return result;
  if((state&GDK_CONTROL_MASK)&&(key==GDK_KEY_j||key==GDK_KEY_k))return escape_dialog(c,key,code,state,w);
  return FALSE;
 }
@@ -278,8 +280,19 @@ static void export_contacts(GtkWidget *w,gpointer unused){(void)w;(void)unused;G
 static void connect_account(GtkWidget *w,gpointer data){(void)w;GtkWindow *win=data;if(CONTACTS)request(operation("connect"),win,g_object_get_data(G_OBJECT(win),"error"));else{char *argv[]={"simple-open","terminal","simple-calendar","--connect",NULL};g_spawn_async(NULL,argv,NULL,G_SPAWN_SEARCH_PATH,NULL,NULL,NULL,NULL);gtk_window_destroy(win);}}
 static void show_accounts(GtkWidget *w,gpointer unused){(void)w;(void)unused;GtkWidget *body;GtkWindow *win=dialog("Accounts",&body);append(body,label(a.connected?"Account connected":"Connect your account","heading"));append(body,label(CONTACTS?"Google Contacts · local copy available offline":"Google Calendar / CalDAV · local copy available offline",NULL));append(body,label("Google sign-in uses the shared browser authentication helper. Calendar and Contacts require their own access permissions.","muted"));GtkWidget *error=label("",NULL);append(body,error);g_object_set_data(G_OBJECT(win),"error",error);append(body,button(a.connected?"Reconnect / configure":"Connect",G_CALLBACK(connect_account),win));if(*str(a.data,"sync_log")){GtkWidget *log=textview(body,"Last sync",str(a.data,"sync_log"));gtk_text_view_set_editable(GTK_TEXT_VIEW(log),FALSE);}
  append(body,button("Close",G_CALLBACK(close_window),win));gtk_window_present(win);}
-static void show_help(void){GtkWidget *body;GtkWindow *win=dialog("Keyboard shortcuts",&body);append(body,label(CONTACTS?"j/k: contacts · h/l: focus\n/: search · n: new · e: edit · x: delete\ns: sync · c: accounts · b: export · Esc/q: close":"h/l: day · j/k: week · H/L: month\nJ/K: events · n/Ctrl+N: new · e: edit · x: delete\nt/g/Home: today · a: agenda\ns: sync · c: accounts · Esc/q: close\nEditor: Ctrl+S save · Ctrl+Shift+N add notification\nTab/Shift+Tab or Ctrl+j/k: next/previous field\nSpace: toggle/open · arrows: choose · Enter: button · Esc: cancel",NULL));append(body,button("Close",G_CALLBACK(close_window),win));gtk_window_present(win);}
-static gboolean keyboard(GtkEventControllerKey *controller,guint key,guint code,GdkModifierType state,gpointer unused){(void)controller;(void)code;(void)unused;if(key==GDK_KEY_Escape){gtk_window_close(a.win);return TRUE;}if((state&GDK_CONTROL_MASK)&&key==GDK_KEY_n){if(CONTACTS)edit_contact(NULL,GINT_TO_POINTER(1));else edit_event(NULL,GINT_TO_POINTER(1));return TRUE;}GtkWidget *focus=gtk_window_get_focus(a.win);for(GtkWidget *w=focus;w;w=gtk_widget_get_parent(w))if(GTK_IS_EDITABLE(w)||GTK_IS_TEXT_VIEW(w)){if(key==GDK_KEY_Escape){gtk_widget_grab_focus(CONTACTS?a.list:a.calendar);return TRUE;}return FALSE;}
+static void show_help(void){GtkWidget *body;GtkWindow *win=dialog("Keyboard shortcuts",&body);append(body,label(CONTACTS?"j/k: contacts · Ctrl+j/k: results while searching\nEnter: focus results · Tab/Shift+Tab: controls\nh/l: focus · /: search · n: new · e: edit · x: delete\ns: sync · c: accounts · b: export · Esc/q: close":"h/l: day · j/k: week · H/L: month\nJ/K: events · n/Ctrl+N: new · e: edit · x: delete\nt/g/Home: today · a: agenda\ns: sync · c: accounts · Esc/q: close\nEditor: Ctrl+S save · Ctrl+Shift+N add notification\nTab/Shift+Tab or Ctrl+j/k: next/previous field\nSpace: toggle/open · arrows: choose · Enter: button · Esc: cancel",NULL));append(body,button("Close",G_CALLBACK(close_window),win));gtk_window_present(win);}
+static void contact_move(int delta,gboolean keep_search) {
+ guint count=g_list_model_get_n_items(G_LIST_MODEL(a.selection));
+ if(!count)return;
+ guint old=gtk_single_selection_get_selected(a.selection);
+ int index=old==GTK_INVALID_LIST_POSITION?0:CLAMP((int)old+delta,0,(int)count-1);
+ gtk_single_selection_set_selected(a.selection,index);
+ gtk_list_view_scroll_to(GTK_LIST_VIEW(a.list),index,keep_search?GTK_LIST_SCROLL_NONE:GTK_LIST_SCROLL_FOCUS,NULL);
+}
+static gboolean keyboard(GtkEventControllerKey *controller,guint key,guint code,GdkModifierType state,gpointer unused){(void)controller;(void)code;(void)unused;if(key==GDK_KEY_Escape){gtk_window_close(a.win);return TRUE;}if((state&GDK_CONTROL_MASK)&&key==GDK_KEY_n){if(CONTACTS)edit_contact(NULL,GINT_TO_POINTER(1));else edit_event(NULL,GINT_TO_POINTER(1));return TRUE;}if(CONTACTS&&(state&gtk_accelerator_get_default_mod_mask())==GDK_CONTROL_MASK&&(key==GDK_KEY_j||key==GDK_KEY_k)){contact_move(key==GDK_KEY_j?1:-1,TRUE);return TRUE;}GtkWidget *focus=gtk_window_get_focus(a.win);if(CONTACTS&&focus&&a.search&&(focus==a.search||gtk_widget_is_ancestor(focus,a.search))&&(key==GDK_KEY_Return||key==GDK_KEY_KP_Enter)){gtk_widget_grab_focus(a.list);return TRUE;}for(GtkWidget *w=focus;w;w=gtk_widget_get_parent(w))if(GTK_IS_EDITABLE(w)||GTK_IS_TEXT_VIEW(w)){if(key==GDK_KEY_Escape){gtk_widget_grab_focus(CONTACTS?a.list:a.calendar);return TRUE;}return FALSE;}
+
+    int control_result=simple_control_key(a.win,key,state);
+    if(control_result>=0)return control_result;
  const char *group=CONTACTS?"contacts":"calendar";
  if(match(group,"quit","q",key,state)){gtk_window_close(a.win);return TRUE;}
  if(match(group,"new","n",key,state)){if(CONTACTS)edit_contact(NULL,GINT_TO_POINTER(1));else edit_event(NULL,GINT_TO_POINTER(1));return TRUE;}
@@ -293,7 +306,7 @@ static gboolean keyboard(GtkEventControllerKey *controller,guint key,guint code,
   if(match(group,"search","slash",key,state)){gtk_widget_grab_focus(a.search);return TRUE;}
   if(match(group,"export","b",key,state)){export_contacts(NULL,NULL);return TRUE;}
   int delta=match("navigation","down","j,Down",key,state)?1:match("navigation","up","k,Up",key,state)?-1:0;
-  if(delta){guint count=g_list_model_get_n_items(G_LIST_MODEL(a.selection));if(count){guint index=gtk_single_selection_get_selected(a.selection);index=CLAMP((int)index+delta,0,(int)count-1);gtk_single_selection_set_selected(a.selection,index);gtk_list_view_scroll_to(GTK_LIST_VIEW(a.list),index,GTK_LIST_SCROLL_FOCUS,NULL);}return TRUE;}
+  if(delta){contact_move(delta,FALSE);return TRUE;}
   if(match("navigation","left","h,Left",key,state)){gtk_widget_grab_focus(a.list);return TRUE;}
   if(match("navigation","right","l,Right",key,state)){gtk_widget_child_focus(a.detail,GTK_DIR_TAB_FORWARD);return TRUE;}
  }else{

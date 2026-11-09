@@ -16,3 +16,5 @@ clean:
 .PHONY: all install clean
 
 simplecalendar-native: ../simple-common/simple-images.h ../simple-common/daylight-art.h
+
+simplecalendar-native: ../simple-common/simple-keyboard.h

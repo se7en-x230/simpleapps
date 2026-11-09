@@ -1,3 +1,4 @@
+#include "../simple-common/simple-keyboard.h"
 #include <gtk/gtk.h>
 #include <json-c/json.h>
 #include "../simple-common/simple-theme.h"
@@ -232,6 +233,9 @@ static void received(GObject *source,GAsyncResult *result,gpointer unused) {
 static gboolean poll_status(gpointer unused) {(void)unused;send(request("status"));return G_SOURCE_CONTINUE;}
 static gboolean keys(GtkEventControllerKey *controller,guint key,guint code,GdkModifierType state,gpointer unused) {
     (void)controller;(void)code;(void)unused;
+
+    int control_result=simple_control_key(GTK_WINDOW(window),key,state);
+    if(control_result>=0)return control_result;
     gboolean after_g=gprefix;gprefix=FALSE;
     if(key==GDK_KEY_g&&(state&GDK_SHIFT_MASK))key=GDK_KEY_G;
     GtkWidget *focus=gtk_window_get_focus(GTK_WINDOW(window));

@@ -16,6 +16,8 @@ from keybindings import KeyBindings
 HINT = KeyBindings().hint() + ' · gg/G First/last · yy Copy · r Refresh'
 
 
+from simple_keyboard import control_key
+
 def descendants(widget):
     child=widget.get_first_child()
     while child:
@@ -120,6 +122,8 @@ class Navigation:
         copy_text('\n\n'.join(values),title=self.window.get_title())
 
     def key(self,controller,key,code,state):
+        handled = control_key(self.window, key, state)
+        if handled is not None: return handled
         if self.keys.matches("cancel",key,state):self.window.close();return True
         focus=self.window.get_focus()
         editing=isinstance(focus,(Gtk.Entry,Gtk.TextView,Gtk.Editable))
@@ -160,6 +164,8 @@ def install_dialog_navigation(window):
     """Use shared navigation for small dialogs, including editable inputs."""
     bindings = KeyBindings('network')
     def key(controller, keyval, code, state):
+        handled = control_key(window, keyval, state)
+        if handled is not None: return handled
         if bindings.matches('cancel', keyval, state):
             window.close()
             return True

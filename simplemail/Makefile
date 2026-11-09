@@ -13,3 +13,5 @@ install: all
 clean:
 	rm -f simplemail-native
 .PHONY: all install clean
+
+simplemail-native: ../simple-common/simple-keyboard.h

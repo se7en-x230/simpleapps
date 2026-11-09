@@ -16,6 +16,11 @@ gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, Gdk, Gio, GLib
 
 
+for _root in [*Path(__file__).resolve().parents, Path(os.environ.get('XDG_DATA_HOME',Path.home()/'.local/share'))]:
+    if (_root/'simple-common/simple_keyboard.py').is_file():
+        sys.path.insert(0,str(_root/'simple-common'));break
+from simple_keyboard import control_key
+
 def cards_for(content, sections=True):
     if isinstance(content, list):
         return content
@@ -156,6 +161,8 @@ class InfoWindow(Gtk.ApplicationWindow):
         target.grab_focus()
 
     def key(self, controller, key, code, state):
+        handled = control_key(self, key, state)
+        if handled is not None: return handled
         if self.keybindings.matches("cancel",key,state):
             self.close(); return True
         for action,move,delta in [('down',self.move_vertical,1),('up',self.move_vertical,-1),('left',self.move_horizontal,-1),('right',self.move_horizontal,1)]:

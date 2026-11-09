@@ -1,3 +1,4 @@
+#include "../simple-common/simple-keyboard.h"
 #include "simple-theme.h"
 #include "sp.h"
 /* Session-only clipboard cache. At most eight scaled images/text previews. */
@@ -480,8 +481,12 @@ static gboolean key(GtkEventControllerKey *c, guint k, guint code,
   (void)c;
   (void)code;
   Menu *m = data;
-  if (m->busy)
+  if (m->busy) {
     return TRUE;
+  }
+
+    int control_result=simple_control_key(GTK_WINDOW(m->window),k,mods);
+    if(control_result>=0)return control_result;
   if (m->vim_navigation) {
     gboolean plain = !(mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK | GDK_META_MASK));
     if (m->escape_closes && k == GDK_KEY_Escape) { menu_finish(m, NULL); return TRUE; }

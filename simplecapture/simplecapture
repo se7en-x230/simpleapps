@@ -176,6 +176,10 @@ def menu(config):
         def choose(self,mode,edit):result.append(config|dict(mode=mode,edit=edit));self.win.close()
         def record(self):result.append(config|{'_record':True});self.win.close()
         def key(self,controller,key,code,state):
+            handled = control_key(self.win, key, state)
+            if handled is not None:
+                if hasattr(self, 'prefix'): self.prefix = ''
+                return handled
             if key in (Gdk.KEY_Escape,Gdk.KEY_q):self.win.close();return True
             if key==Gdk.KEY_v:self.record();return True
             options={Gdk.KEY_r:('region',config['edit']),Gdk.KEY_f:('fullscreen',config['edit']),Gdk.KEY_c:('region',False),Gdk.KEY_a:('fullscreen',False)}
@@ -184,6 +188,19 @@ def menu(config):
             return False
     App().run([])
     return result[0] if result else None
+
+
+# Resolve the shared keyboard helper both from a checkout and an installed prefix.
+from pathlib import Path as _KeyboardPath
+import sys as _keyboard_sys
+import os as _keyboard_os
+for _keyboard_root in (_KeyboardPath(__file__).resolve().parent.parent / 'simple-common',
+                       _KeyboardPath(__file__).resolve().parent.parent / 'share/simple-common',
+                       _KeyboardPath(_keyboard_os.environ.get('XDG_DATA_HOME', _KeyboardPath.home()/'.local/share')) / 'simple-common'):
+    if (_keyboard_root / 'simple_keyboard.py').is_file():
+        _keyboard_sys.path.insert(0, str(_keyboard_root))
+        break
+from simple_keyboard import control_key
 
 
 def main(argv=None):

@@ -44,6 +44,19 @@ def write_json(path,data):
         if os.path.exists(tmp):os.unlink(tmp)
 
 
+# Resolve the shared keyboard helper both from a checkout and an installed prefix.
+from pathlib import Path as _KeyboardPath
+import sys as _keyboard_sys
+import os as _keyboard_os
+for _keyboard_root in (_KeyboardPath(__file__).resolve().parent.parent / 'simple-common',
+                       _KeyboardPath(__file__).resolve().parent.parent / 'share/simple-common',
+                       _KeyboardPath(_keyboard_os.environ.get('XDG_DATA_HOME', _KeyboardPath.home()/'.local/share')) / 'simple-common'):
+    if (_keyboard_root / 'simple_keyboard.py').is_file():
+        _keyboard_sys.path.insert(0, str(_keyboard_root))
+        break
+from simple_keyboard import control_key
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('file',nargs='?');parser.add_argument('--check-config',action='store_true')
@@ -224,7 +237,7 @@ def main():
             self.popup('Simplepdf tools',[(name,fn) for name,fn in [
                 ('Extract text [;t]',lambda:self.export('text')),('Extract pages [;e]',lambda:self.prompt('split','Pages: 1,3-5',str(self.page+1))),
                 ('Compress [;c]',lambda:self.export('compress')),('OCR [;o]',lambda:self.prompt('ocr','OCR language',cfg['ocr_language'])),
-                ('Bookmarks [;l]',self.bookmarks),('Contents [Tab]',self.outline),('Print [p]',self.print_doc)]])
+                ('Bookmarks [;l]',self.bookmarks),('Contents [t]',self.outline),('Print [p]',self.print_doc)]])
 
         def export(self,action,option=''):
             if not self.doc or self.job:return
@@ -314,13 +327,17 @@ def main():
                 'h/j/k/l scroll · d/u half page · Ctrl+d/u next/previous',
                 'gg / G first/last · digits+G page · : page number',
                 'J/K or −/+ zoom · ;w fit width · ;p fit page',
-                '/ search · n/N matches · Tab contents · f links',
+                '/ search · n/N matches · t contents · Tab/Shift+Tab controls · f links',
                 'R rotate · i invert colours · r reload · p print',
                 ';b add bookmark · ;l list bookmarks',
                 ';t text · ;e extract pages · ;c compress · ;o OCR',
                 'o open · y copy page text · Esc cancel/close · q close']])
 
         def key(self,controller,key,code,state):
+            handled = control_key(self.win, key, state)
+            if handled is not None:
+                if hasattr(self, 'prefix'): self.prefix = ''
+                return handled
             name=Gdk.keyval_name(key)
             if name=='Escape':
                 if self.entry.get_visible():self.entry.set_visible(False);self.area.grab_focus()
@@ -350,7 +367,7 @@ def main():
             elif name=='colon':self.prompt('page','Page number')
             elif name=='G':self.goto(int(self.number)-1 if self.number else (self.doc.get_n_pages()-1 if self.doc else 0));self.number=''
             elif name in ('n','N'):self.next_hit(1 if name=='n' else -1)
-            elif name=='Tab':self.outline()
+            elif name=='t':self.outline()
             elif name=='f':self.links()
             elif name=='p':self.print_doc()
             elif name=='r' and self.path:self.open_file(self.path)

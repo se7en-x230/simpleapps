@@ -9,6 +9,7 @@ mode=sys.argv[1];present=Gtk.ApplicationWindow.present
 work=TemporaryDirectory();root=Path(work.name)
 (root/'folder').mkdir();(root/'a.txt').write_text('Preview text\n');(root/'b.txt').write_text('Second file\n');(root/'.hidden').write_text('Hidden')
 (root/'folder'/'nested.txt').write_text('Nested')
+(root/'folder'/'.secret').write_text('Hidden')
 if mode=='large':
  for i in range(10000):(root/f'item-{i:05}.txt').touch()
 output=root/'result';state={'done':False};stage=0;started=time.monotonic()
@@ -22,7 +23,20 @@ def patched(win):
   global stage
   if not app.items:return True
   try:
-   if mode=='open':
+   if mode=='preview':
+    if stage==0:
+     assert app.folder_scroll.get_visible()
+     assert app.folder_model.get_n_items()==1
+     assert app.folder_model.get_string(0)=='nested.txt'
+     key(Gdk.KEY_k);assert app.hovered()==app.visible[-1]
+     key(Gdk.KEY_j);assert app.hovered()==root/'folder'
+     key(Gdk.KEY_period);stage=1;return True
+    if stage==1:
+     assert app.folder_model.get_n_items()==2
+     app.move(1);stage=2;return True
+    assert not app.folder_scroll.get_visible()
+    app.win.close();expected=[]
+   elif mode=='open':
     if stage==0:
      assert app.hovered()==root/'folder';key(Gdk.KEY_l);stage=1;return True
     if app.cwd!=root/'folder':return True

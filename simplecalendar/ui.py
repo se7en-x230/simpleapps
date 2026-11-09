@@ -10,6 +10,8 @@ from theme_loader import load_css
 
 REMINDERS=[0,15,30,60,1440,10080,14400,40320]
 
+from simple_keyboard import control_key
+
 def children(box):
     w=box.get_first_child()
     while w:
@@ -84,6 +86,8 @@ def run(day):
             controller.connect('key-pressed',lambda c,key,code,state:self.keys(window,key,state,dialog))
             window.add_controller(controller)
         def keys(self,window,key,state,dialog=False):
+            handled = control_key(window, key, state)
+            if handled is not None: return handled
             nav=lambda action:self.prefs.matches('navigation',action,key,state)
             action=lambda name:self.prefs.matches('calendar',name,key,state)
             if dialog:

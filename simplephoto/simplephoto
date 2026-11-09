@@ -152,6 +152,19 @@ def save(p,data,settings,rect=None,mask=None):
 
 UI_CONTROLS=(*CONTROLS,'Portrait blur','Zoom')
 
+# Resolve the shared keyboard helper both from a checkout and an installed prefix.
+from pathlib import Path as _KeyboardPath
+import sys as _keyboard_sys
+import os as _keyboard_os
+for _keyboard_root in (_KeyboardPath(__file__).resolve().parent.parent / 'simple-common',
+                       _KeyboardPath(__file__).resolve().parent.parent / 'share/simple-common',
+                       _KeyboardPath(_keyboard_os.environ.get('XDG_DATA_HOME', _KeyboardPath.home()/'.local/share')) / 'simple-common'):
+    if (_keyboard_root / 'simple_keyboard.py').is_file():
+        _keyboard_sys.path.insert(0, str(_keyboard_root))
+        break
+from simple_keyboard import control_key, dialog_keys
+
+
 def main(argv):
     parser=argparse.ArgumentParser(description='SimplePhoto: crop and adjust photos; save a separate copy.')
     parser.add_argument('--crop',action='store_true',help='Start in crop mode')
@@ -232,6 +245,7 @@ def main(argv):
         def choose(self,*_):
             if self.busy:return
             dialog=Gtk.FileChooserDialog(title='Open photo',transient_for=self.win,modal=True,action=Gtk.FileChooserAction.OPEN)
+            dialog_keys(dialog)
             dialog.add_buttons('Cancel',Gtk.ResponseType.CANCEL,'Open',Gtk.ResponseType.ACCEPT)
             dialog.set_default_response(Gtk.ResponseType.ACCEPT)
             filt=Gtk.FileFilter();filt.set_name('Photos')
@@ -244,7 +258,8 @@ def main(argv):
                 d.destroy()
             dialog.connect('response',response);dialog.present();self.dialog=dialog
         def help(self,*_):
-            dialog=Gtk.MessageDialog(transient_for=self.win,modal=True,buttons=Gtk.ButtonsType.CLOSE,text='SimplePhoto keys',secondary_text='Adjust: j/k or ↑/↓ select control; h/l or ←/→ change value. Shift: steps of 10. 0: reset selected (Zoom returns to 100% fit); r: reset all adjustments; g/G: first/last control. Zoom is view-only; drag the zoomed image to pan.\n\nb: full-window manual blur brush. Hold Space to zoom at the pointer; release to fit. Paint to blur; Shift-drag erases; [/] brush size; m overlay; u undo stroke; r clear mask; Enter finish. v: original/edited; t/Shift+t: rotate right/left; x/Shift+x: mirror left-right/top-bottom; c: toggle crop. Crop starts with a centred rectangle. h/j/k/l move it by 1% of image size; Shift resizes its bottom/right edge; f toggles fast 5% movement/resizing; Ctrl uses 1-pixel precision. z/Shift+z shrink/grow around the centre (also -/+ and keypad -/+); r selects the full image. Mouse dragging is optional. Enter applies crop preview and returns to adjustments.\n\ns or Ctrl+s: save copy; n / ]: next photo; o: open; q / Esc: close (Esc exits crop first); ?: this help.\n\nOriginal files stay untouched. Copies are SDR; HDR gain maps and Motion Photo video are not retained.')
+            dialog=Gtk.MessageDialog(transient_for=self.win,modal=True,buttons=Gtk.ButtonsType.CLOSE,text='SimplePhoto keys',secondary_text='Adjust: j/k or ↑/↓ select control; h/l or ←/→ change value. Shift: steps of 10. 0: reset selected (Zoom returns to 100% fit); r: reset all adjustments; g/G: first/last control. Zoom is view-only; drag the zoomed image to pan.\n\nb: full-window manual blur brush. Hold Space to zoom at the pointer; release to fit. Arrows move the brush cursor (Ctrl for precision); p paints, Shift+p erases. Mouse paint and Shift-drag erase also work; [/] brush size; m overlay; u undo stroke; r clear mask; Enter finish. v: original/edited; t/Shift+t: rotate right/left; x/Shift+x: mirror left-right/top-bottom; c: toggle crop. Crop starts with a centred rectangle. h/j/k/l move it by 1% of image size; Shift resizes its bottom/right edge; f toggles fast 5% movement/resizing; Ctrl uses 1-pixel precision. z/Shift+z shrink/grow around the centre (also -/+ and keypad -/+); r selects the full image. Mouse dragging is optional. Enter applies crop preview and returns to adjustments.\n\ns or Ctrl+s: save copy; n / ]: next photo; o: open; q / Esc: close (Esc exits crop first); ?: this help.\n\nOriginal files stay untouched. Copies are SDR; HDR gain maps and Motion Photo video are not retained.')
+            dialog_keys(dialog)
             dialog.connect('response',lambda d,*_:d.destroy());dialog.present()
         def work(self,fn,done):
             self.busy=True;self.save_button.set_sensitive(False)
@@ -404,7 +419,7 @@ def main(argv):
             if self.crop_mode:
                 self.footer.set_text('CROP · h/j/k/l: move · Shift: resize · f: fast · Ctrl: precise · z/Z: shrink/grow · r: full image · Enter/Esc: done')
             elif self.brush_mode:
-                self.footer.set_text('BLUR · j/k: brush size · h/l: strength · Shift-drag: erase · Space: zoom · u: undo · m: overlay · Enter/Esc: done')
+                self.footer.set_text('BLUR · arrows: cursor · p/P: paint/erase · j/k: size · h/l: strength · Space: zoom · u: undo · Enter/Esc: done')
             else:
                 self.footer.set_text('j/k select · h/l adjust · 0 reset · c crop · b blur · v compare · t/T rotate · x/X mirror · s save · ? keys')
             if focused and not self.focused:
@@ -439,6 +454,21 @@ def main(argv):
             a=np.zeros((self.mask.height,self.mask.width,4),dtype=np.uint8);a[:,:,:3]=(255,65,80)
             a[:,:,3]=np.rint((255-np.asarray(self.mask,dtype=np.float32))*.42).astype(np.uint8)
             self.overlay_pix=GdkPixbuf.Pixbuf.new_from_bytes(GLib.Bytes.new(a.tobytes()),GdkPixbuf.Colorspace.RGB,True,8,self.mask.width,self.mask.height,self.mask.width*4)
+        def keyboard_brush(self,key=None,precise=False,erase=False):
+            if not self.pix or self.mask is None:return
+            scale,ox,oy=self.transform()
+            x,y=self.cursor or (ox+self.pix.get_width()*scale/2,oy+self.pix.get_height()*scale/2)
+            point=self.brush_point(x,y,clamp=True)
+            if key is not None:
+                step=1 if precise else max(1,self.brush_radius/2)
+                dx,dy={Gdk.KEY_Left:(-step,0),Gdk.KEY_Right:(step,0),Gdk.KEY_Up:(0,-step),Gdk.KEY_Down:(0,step)}[key]
+                point=(max(0,min(self.mask.width-1,point[0]+dx)),max(0,min(self.mask.height-1,point[1]+dy)))
+            else:
+                self.remember_mask();paint_mask(self.mask,point,point,self.brush_radius,erase)
+                self.render()
+            self.cursor=(ox+point[0]*scale,oy+point[1]*scale)
+            self.area.queue_draw()
+
         def brush_point(self,x,y,clamp=False):
             scale,ox,oy=self.transform();x=(x-ox)/scale;y=(y-oy)/scale
             if not clamp and not (0<=x<self.mask.width and 0<=y<self.mask.height):return None
@@ -459,6 +489,10 @@ def main(argv):
             if self.busy:return
             self.original=not self.original;self.render()
         def key(self,controller,key,code,state):
+            handled = control_key(self.win, key, state)
+            if handled is not None:
+                if hasattr(self, 'prefix'): self.prefix = ''
+                return handled
             if self.busy:return True
             shift=bool(state&Gdk.ModifierType.SHIFT_MASK);ctrl=bool(state&Gdk.ModifierType.CONTROL_MASK);lower=Gdk.keyval_to_lower(key)
             if lower==Gdk.KEY_t:self.rotate(not shift);return True
@@ -471,6 +505,10 @@ def main(argv):
                 return True
             if lower==Gdk.KEY_b:self.toggle_brush();return True
             if self.brush_mode:
+                if key in (Gdk.KEY_Left,Gdk.KEY_Right,Gdk.KEY_Up,Gdk.KEY_Down):
+                    self.keyboard_brush(key,ctrl);return True
+                if lower==Gdk.KEY_p:
+                    self.keyboard_brush(erase=shift);return True
                 if key==Gdk.KEY_space:self.start_zoom();return True
                 if lower in (Gdk.KEY_h,Gdk.KEY_l):
                     self.brush_amount.set_value(self.brush_amount.get_value()+(1 if lower==Gdk.KEY_l else -1)*(10 if shift else 1));return True

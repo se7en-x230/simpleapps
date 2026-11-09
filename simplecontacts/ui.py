@@ -8,6 +8,8 @@ import core,auth,preferences
 sys.path.insert(0,str(Path(__file__).resolve().parent.parent/'simple-common'))
 from theme_loader import load_css
 
+from simple_keyboard import control_key
+
 def box(vertical=True,spacing=8):return Gtk.Box(orientation=Gtk.Orientation.VERTICAL if vertical else Gtk.Orientation.HORIZONTAL,spacing=spacing)
 def label(text,css=None):
  w=Gtk.Label(label=text,xalign=0,wrap=True);w.set_selectable(css not in ('heading','section','muted'))
@@ -59,7 +61,21 @@ class App(Gtk.Application):
   if not self.busy and (core.ROOT/'google-token.json').exists():self.work(core.sync)
   return True
  def keys(self,controller,key,code,state):
+  handled = control_key(self.win, key, state)
+  if handled is not None: return handled
   focus=self.win.get_focus();node=focus
+  if state&Gdk.ModifierType.CONTROL_MASK and key in (Gdk.KEY_j,Gdk.KEY_k):
+   row=self.list.get_selected_row();index=row.get_index() if row else 0
+   if self.rows:
+    index=max(0,min(len(self.rows)-1,index+(1 if key==Gdk.KEY_j else -1)))
+    self.list.select_row(self.rows[index])
+    # Scroll the selected row into view without taking focus from the search.
+    allocation=self.rows[index].get_allocation();adj=self.list_scroll.get_vadjustment()
+    if allocation.y<adj.get_value():adj.set_value(allocation.y)
+    elif allocation.y+allocation.height>adj.get_value()+adj.get_page_size():adj.set_value(allocation.y+allocation.height-adj.get_page_size())
+   return True
+  if focus and (focus==self.search or focus.is_ancestor(self.search)) and key in (Gdk.KEY_Return,Gdk.KEY_KP_Enter):
+   self.list.grab_focus();return True
   while node:
    if isinstance(node,(Gtk.Editable,Gtk.TextView)):
     if key==Gdk.KEY_Escape:self.list.grab_focus();return True

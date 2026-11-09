@@ -103,3 +103,5 @@ Existing component README files describe developer details and may mention short
 ## Licensing
 
 Existing third-party copyright and license notices are retained in the source files. A project-wide distribution license has not yet been selected.
+
+See [keyboard controls](docs/keyboard.md) for focus navigation and app-specific shortcuts.

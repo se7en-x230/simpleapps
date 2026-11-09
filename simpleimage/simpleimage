@@ -78,6 +78,20 @@ def trash_paths(paths):
     return moved,failed
 
 
+def texture_for_pixbuf(pix):
+    """Keep decoded RGB/RGBA data in a non-premultiplied memory texture."""
+    import gi
+    gi.require_version('Gdk','4.0')
+    from gi.repository import Gdk,GLib
+    width,height=pix.get_width(),pix.get_height();stride=pix.get_rowstride()
+    # Pixbuf may omit padding after the last row; MemoryTexture requires it.
+    data=pix.read_pixel_bytes()
+    if data.get_size()<stride*height:
+        data=GLib.Bytes.new(data.get_data()+bytes(stride*height-data.get_size()))
+    fmt=Gdk.MemoryFormat.R8G8B8A8 if pix.get_has_alpha() else Gdk.MemoryFormat.R8G8B8
+    return Gdk.MemoryTexture.new(width,height,fmt,data,stride)
+
+
 def gui(cfg,args):
     import gi
     gi.require_version('Gtk','4.0');gi.require_version('GdkPixbuf','2.0');gi.require_foreign('cairo')
@@ -192,7 +206,7 @@ def gui(cfg,args):
             pix=self.pixbuf
             if self.rotation:pix=pix.rotate_simple({90:GdkPixbuf.PixbufRotation.CLOCKWISE,180:GdkPixbuf.PixbufRotation.UPSIDEDOWN,270:GdkPixbuf.PixbufRotation.COUNTERCLOCKWISE}[self.rotation])
             if self.mirror:pix=pix.flip(True)
-            self.displayed=pix;self.picture.set_paintable(Gdk.Texture.new_for_pixbuf(pix));self.layout();self.report()
+            self.displayed=pix;self.picture.set_paintable(texture_for_pixbuf(pix));self.layout();self.report()
 
         def layout(self):
             if not self.pixbuf:return
@@ -225,7 +239,7 @@ def gui(cfg,args):
             try:stat=path.stat();key=(str(path),stat.st_mtime_ns,stat.st_size,width,height)
             except OSError:return
             cached=self.thumbcache.get(key)
-            if cached:item.pic.set_paintable(Gdk.Texture.new_for_pixbuf(cached));return
+            if cached:item.pic.set_paintable(texture_for_pixbuf(cached));return
             def load():return GdkPixbuf.Pixbuf.new_from_file_at_scale(str(path),width,height,True).apply_embedded_orientation()
             item.job=self.pool.submit(load)
             def finished(f):
@@ -235,7 +249,7 @@ def gui(cfg,args):
                 def apply():
                     if self.closed:return False
                     self.thumbcache.put(key,pix)
-                    if item.token==token:item.pic.set_paintable(Gdk.Texture.new_for_pixbuf(pix))
+                    if item.token==token:item.pic.set_paintable(texture_for_pixbuf(pix))
                     return False
                 GLib.idle_add(apply)
             item.job.add_done_callback(finished)
@@ -433,6 +447,10 @@ def gui(cfg,args):
             except OSError as e:self.message(str(e))
 
         def key(self,controller,key,code,state):
+            handled = control_key(self.win, key, state)
+            if handled is not None:
+                if hasattr(self, 'prefix'): self.prefix = ''
+                return handled
             name=Gdk.keyval_name(key);ctrl=bool(state&Gdk.ModifierType.CONTROL_MASK)
             if name in ('q','Escape'):self.win.close();return True
             if self.trashing:return True
@@ -463,7 +481,7 @@ def gui(cfg,args):
                 paths=[p for p in self.files if p in self.marked] or ([self.selected_path()] if self.selected_path() else [])
                 self.win.get_clipboard().set('\n'.join(map(str,paths)));self.message('Paths copied')
             elif name=='Y' or (ctrl and name=='c'):
-                if self.pixbuf:self.win.get_clipboard().set(Gdk.Texture.new_for_pixbuf(self.displayed));self.message('Image copied (current decoded view)')
+                if self.pixbuf:self.win.get_clipboard().set(texture_for_pixbuf(self.displayed));self.message('Image copied (current decoded view)')
             elif self.show_grid and self.files:
                 position=self.selection.get_selected();columns=self.columns
                 if name in ('h','j','k','l','n','p','space','BackSpace'):
@@ -490,6 +508,19 @@ def gui(cfg,args):
             else:return False
             return True
     return Viewer().run([])
+
+
+# Resolve the shared keyboard helper both from a checkout and an installed prefix.
+from pathlib import Path as _KeyboardPath
+import sys as _keyboard_sys
+import os as _keyboard_os
+for _keyboard_root in (_KeyboardPath(__file__).resolve().parent.parent / 'simple-common',
+                       _KeyboardPath(__file__).resolve().parent.parent / 'share/simple-common',
+                       _KeyboardPath(_keyboard_os.environ.get('XDG_DATA_HOME', _KeyboardPath.home()/'.local/share')) / 'simple-common'):
+    if (_keyboard_root / 'simple_keyboard.py').is_file():
+        _keyboard_sys.path.insert(0, str(_keyboard_root))
+        break
+from simple_keyboard import control_key
 
 
 def main():

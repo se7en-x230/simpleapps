@@ -34,3 +34,6 @@ An individual installer also provides `./uninstall`. Uninstallation preserves pe
 [Source directory](../simplecontacts/) · [Dependency and option catalog](../simpleinstaller/components.json) · [All apps](../README.md)
 
 Runtime packages: `gtk4`, `json-c`, `python`, `python-google-auth`, `python-requests`, `xdg-utils`, `wl-clipboard`.
+
+While searching (`/`), `Ctrl+j` / `Ctrl+k` moves through the filtered results
+without leaving the search field. `Enter` returns focus to the results.

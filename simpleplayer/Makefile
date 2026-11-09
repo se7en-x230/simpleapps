@@ -16,3 +16,5 @@ install: check
 	python3 install.py
 clean:
 	rm -f simpleplayer-native
+
+simpleplayer-native: ../simple-common/simple-keyboard.h

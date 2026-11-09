@@ -123,6 +123,9 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
         desktop(share/'applications'/(name+'.desktop'),catalog[name]['name'],command+' %F' if recipe in ('photo','pdf','image') else command,category='Graphics;Photography' if recipe in ('photo','image') else 'Office' if recipe=='pdf' else 'Utility')
         for p in stage.rglob('*'):
             if p.is_file() and p not in before:owners[p]={name}
+    keyboard_helper=share/'simple-common/simple_keyboard.py'
+    put(root/'simple-common/simple_keyboard.py',keyboard_helper)
+    owners[keyboard_helper]=set(names)
     if set(names)<={'simplephoto','simplefiles','simplenotes','simplecapture','simpletimer','simplepdf','simpleimage','simplebookmarks'}:return owners
     before={p for p in stage.rglob('*') if p.is_file()}
     for p in (root/'simple-common').glob('*.py'):put(p,share/'simple-common'/p.name)
