@@ -4,6 +4,14 @@ Small Linux desktop applications with a shared visual style. Install the apps yo
 
 All apps support Vim-style key bindings, and almost every function can be used from the keyboard. See each app’s page for its shortcuts.
 
+## Philosophy: fast, easy, clean, simple
+
+Simpleapps aims to make everyday work quick and straightforward. Each tool has a clear purpose, a clean interface, and familiar controls, so you can spend less time navigating and more time doing.
+
+**Vim-style keyboard controls are central to the workflow.** Keep your hands on the keyboard: use familiar navigation, search, selection, and action shortcuts to move through tasks quickly. Shared controls reduce what you need to relearn between apps; visible hints help you discover the keys. See each app’s guide for its exact bindings.
+
+Fast means a short path from opening a tool to finishing a task. Easy means clear actions and predictable behavior. Clean means keeping the interface focused. Simple means small tools you can understand, configure, and combine into your own workflow.
+
 ## One base, your choice of apps
 
 Install one app or several. The installer brings in the shared C framework on the
