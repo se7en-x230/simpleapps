@@ -123,3 +123,7 @@ optional features and install the app, or `./uninstall` to remove only this app.
 The full suite installer continues to support selecting several apps. All bundles
 share the installation registry so shared components are retained when needed.
 Only the Simplewallpaper bundle exports optional theme archives.
+
+## License
+
+Original Simpleapps code is licensed under GPL-3.0-or-later (GNU GPL version 3 or any later version). See the repository’s LICENSE and COPYING files. Third-party components retain their own licenses and notices.

@@ -34,3 +34,7 @@ An empty query keeps the original category layout; submenu navigation is unchang
 Optional [Passwords overlay](passwords/README.md): `simple-passwords` searches the
 existing KeePassXC Secret Service group. Requires python-dbus and wl-clipboard;
 it uses the same Simplepicker UI and never creates another password store.
+
+## License
+
+Original Simpleapps code is licensed under GPL-3.0-or-later (GNU GPL version 3 or any later version). See the repository’s LICENSE and COPYING files. Third-party components retain their own licenses and notices.

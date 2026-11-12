@@ -1,0 +1,19 @@
+Simpleapps — GPL-3.0-or-later
+
+The original Simpleapps code, including its applications, shared framework,
+installer, scripts, and tests, is free software: you can redistribute it and/or
+modify it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your
+option) any later version.
+
+Simpleapps is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+The full GNU GPL version 3 text is included in LICENSE. The SPDX license
+identifier for the original Simpleapps code is GPL-3.0-or-later.
+
+Third-party code and assets retain their own copyright and license notices.
+This grant does not relicense those materials or external dependencies.
+In particular, preserve the MIT notices for vendored tomlc99 and wtype, and
+the Unicode license accompanying the symbol data.

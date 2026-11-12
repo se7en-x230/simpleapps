@@ -78,3 +78,7 @@ state with fixtures. `python3 tests/gui.py` checks keyboard interaction using fa
 entries. `python3 tests/live.py` exercises real Picard loading and tag saving on a
 generated FLAC in an isolated temporary profile (requires ffmpeg and mutagen).
 It does not test online MusicBrainz or AcoustID results.
+
+## License
+
+Original Simpleapps code is licensed under GPL-3.0-or-later (GNU GPL version 3 or any later version). See the repository’s LICENSE and COPYING files. Third-party components retain their own licenses and notices.

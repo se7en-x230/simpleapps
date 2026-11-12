@@ -294,6 +294,11 @@ def bundle(root,target,app=None):
     folder=app+'-installer' if app else 'simpleinstaller'
     with tempfile.TemporaryDirectory(prefix='simpleinstaller-bundle-') as td:
         out=Path(td)/folder;out.mkdir()
+        (out/'sources').mkdir()
+        for name in ('LICENSE','COPYING'):
+            license_path=root/name if (root/name).is_file() else HERE/name
+            shutil.copy2(license_path,out/name)
+            shutil.copy2(license_path,out/'sources'/name)
         for name in ('simpleinstaller','README.md','recipes.py','wallpaper_pack.py','uninstall.py'):
             shutil.copy2(HERE/name,out/name)
         (out/'components.json').write_text(json.dumps({'schema':2,'components':{name:CATALOG[name] for name in names}},indent=2)+'\n')
@@ -310,6 +315,9 @@ def bundle(root,target,app=None):
                 script.chmod(0o755)
             title=CATALOG[app]['name']
             (out/'README.md').write_text(f"""# {title} installer
+
+Original Simpleapps code is GPL-3.0-or-later. See LICENSE and COPYING;
+third-party components retain their existing licenses and notices.
 
 This standalone bundle installs **{title}**. It contains its source and required
 shared components. It does not require Newinit or another installer bundle.

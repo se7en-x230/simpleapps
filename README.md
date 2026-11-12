@@ -159,7 +159,9 @@ Existing component README files describe developer details and may mention short
 
 ## Licensing
 
-Existing third-party copyright and license notices are retained in the source files. A project-wide distribution license has not yet been selected.
+All original Simpleapps tools and shared code are **GPL-3.0-or-later**: GNU General Public License version 3, or (at your option) any later version.
+
+See [COPYING](COPYING) for the license grant and third-party exceptions, and [LICENSE](LICENSE) for the full GPL text. Existing third-party copyright and license notices remain intact.
 
 See [keyboard controls](docs/keyboard.md) for focus navigation and app-specific shortcuts.
 

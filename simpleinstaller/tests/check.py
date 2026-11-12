@@ -13,6 +13,16 @@ installer=module('installer',BASE/'simpleinstaller')
 resolver=module('resolver',BASE/'runtime/simple-open.py')
 player=module('playerconfig',SOURCES/'simpleplayer/scripts/simpleplayer-config.py')
 class Tests(unittest.TestCase):
+ def test_bundle_includes_license_grant(self):
+  import tarfile
+  with tempfile.TemporaryDirectory() as td:
+   target=Path(td)/'timer.tar.gz'
+   installer.bundle(SOURCES,target,'simpletimer')
+   with tarfile.open(target) as archive:
+    for prefix in ('simpletimer-installer/', 'simpletimer-installer/sources/'):
+     self.assertIn(b'GNU GENERAL PUBLIC LICENSE',archive.extractfile(prefix+'LICENSE').read())
+     self.assertIn(b'GPL-3.0-or-later',archive.extractfile(prefix+'COPYING').read())
+    self.assertIn(b'GPL-3.0-or-later',archive.extractfile('simpletimer-installer/README.md').read())
  def test_framework_staging_and_portable_dependencies(self):
   result=subprocess.run([str(BASE/'simpleinstaller'),'--dependencies','simplegarmin'],text=True,capture_output=True)
   self.assertEqual(result.returncode,0,result.stderr)
