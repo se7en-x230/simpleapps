@@ -2,6 +2,8 @@
 
 Install individual Simple apps on Linux, keeping your current desktop and personal settings. Run as your normal user with Python 3.11 or newer. Automatic package installation supports Arch/Artix through pacman. On Debian 13 and other distributions, install dependencies with your package manager, then use `--no-packages`; see the [Linux installation and source-build guide](../docs/portability.md). Builds use native libraries and distribution Python packages rather than Newinit or pip.
 
+[Illustrated installer guide and screenshot](https://github.com/se7en-x230/simpleapps/blob/main/docs/simpleinstaller.md)
+
 ## Start
 
 Unpack the source archive, enter its `simpleinstaller` folder, then run:

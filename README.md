@@ -78,6 +78,14 @@ Screenshots use an isolated demo profile with sample content.
 For direct builds on Debian 13 or Arch, dependency lists, optional helpers, and
 custom installation prefixes, see [Portable builds](docs/portability.md).
 
+## Manage apps with Simpleinstaller
+
+[![Simpleinstaller with grouped apps and install, remove, and keep indicators](docs/screenshots/simpleinstaller.png)](docs/simpleinstaller.md)
+
+Run `./install` to open the menu. Installed apps start checked: leave them checked to keep them, check another app to install it, or uncheck an installed app to remove it. Press Space to toggle and Enter to review the plan before confirming. Settings and personal data are retained when uninstalling.
+
+The screenshot uses demo selections. [See the illustrated installer guide](docs/simpleinstaller.md) for keyboard controls, installed-app detection, and update commands.
+
 ## Install from this checkout
 
 The source installer supports **Linux with Python 3.11+ and preinstalled dependencies** using `--no-packages`. Automatic package installation remains Arch/pacman-only. GTK apps can run on other desktops; wallpaper, panel and lock features need the Wayland protocols listed on their app pages.
