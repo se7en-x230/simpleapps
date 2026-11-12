@@ -245,7 +245,7 @@ def install_prepared(args,names,options,wallpapers):
             changed=[str(dst) for dst,(src,preserve) in files.items() if not preserve and dst.exists() and (dst.is_symlink() or digest(dst)!=digest(src))]
             if changed:
                 print('\nExisting files to replace (backups retained):\n  '+'\n  '.join(sorted(changed)))
-                if not args.yes and input('Install these files? [y/N] ').strip().lower()!='y':print('Cancelled.');return
+                if not args.yes and input('Install these files? [y/N] ').strip().lower()!='y':print('Cancelled.');return False
             uninstall.registration(files,stage,names,owners,dirs)
             apply_files(files,state)
     print('\nInstalled: '+', '.join(CATALOG[n]['name'] for n in names))
@@ -254,6 +254,7 @@ def install_prepared(args,names,options,wallpapers):
     if 'simpleplayer' in names:print('Music settings: '+str(dirs['config']/'simpleplayer/config.toml'))
     for name in names:
         if CATALOG[name].get('after_install'):print('\n'+CATALOG[name]['name']+': '+CATALOG[name]['after_install'])
+    return True
 
 def remove_apps(args):
     if os.geteuid()==0:raise ValueError('Run Simpleinstaller as your normal user, not root.')
@@ -353,7 +354,7 @@ need one reinstall to register their files. Keep this folder for uninstall/updat
         with tarfile.open(target,'w:gz') as archive:archive.add(out,arcname=folder)
     print('Source bundle:',target)
 
-def choose_rows(title,rows,chosen=None,allow_empty=False,groups=None):
+def choose_rows(title,rows,chosen=None,allow_empty=False,groups=None,installed=None):
     chosen=set(chosen or ());cursor=0;offset=0
     entries=[];positions={};last_group=None
     for index,(rowkey,_,_) in enumerate(rows):
@@ -394,7 +395,11 @@ def choose_rows(title,rows,chosen=None,allow_empty=False,groups=None):
                 offset=max(0,min(offset,position));offset=max(offset,position-capacity+1)
                 line(1,'Simpleinstaller',heading)
                 line(2,title+'  /  '+((groups or {}).get(rows[cursor][0]) or 'Choose what you need'),normal)
-                line(4,f'{len(chosen)} selected    ·    Shared components included automatically',muted)
+                if installed is None:
+                    line(4,f'{len(chosen)} selected    ·    Shared components included automatically',muted)
+                else:
+                    line(3,'Checked = keep / install    Unchecked = remove / leave absent',muted)
+                    line(4,f'{len(chosen-installed)} to install    {len(installed-chosen)} to remove    {len(chosen&installed)} to keep',heading)
                 name_width=min(25,max(len(row[1].split(' — ',1)[0].split(' · ',1)[0]) for row in rows)+2)
                 for slot,(n,group) in enumerate(entries[offset:offset+capacity]):
                     y=6+slot*stride
@@ -405,6 +410,9 @@ def choose_rows(title,rows,chosen=None,allow_empty=False,groups=None):
                     name,sep,description=label.partition(' — ')
                     if not sep:name,sep,description=label.partition(' · ')
                     focused=n==cursor
+                    if installed is not None:
+                        state='Keep' if rowkey in installed and rowkey in chosen else 'REMOVE' if rowkey in installed else 'INSTALL' if rowkey in chosen else 'Not installed'
+                        description=state+' · '+description
                     if focused:line(y,' '*panel_width,active)
                     line(y,('› ' if focused else '  ')+('[✓] ' if rowkey in chosen else '[ ] '),active if focused else selected if rowkey in chosen else muted)
                     line(y,name,active|curses.A_BOLD if focused else normal,x=6)
@@ -414,6 +422,10 @@ def choose_rows(title,rows,chosen=None,allow_empty=False,groups=None):
                 line(bottom,'─'*panel_width,muted)
                 label=rows[cursor][1]
                 description=label.split(' — ',1)[-1].split(' · ',1)[-1]
+                if installed is not None:
+                    rowkey=rows[cursor][0]
+                    state='Installed · keep' if rowkey in installed and rowkey in chosen else 'Installed · will uninstall' if rowkey in installed else 'Will install' if rowkey in chosen else 'Not installed'
+                    description=state+' — '+description
                 line(bottom+1,description,normal)
                 line(bottom+2,rows[cursor][2],muted)
                 line(bottom+4,'Space  Select     Enter  Continue     a  All     q  Quit',heading)
@@ -448,11 +460,12 @@ def app_menu_rows():
     rows=[(name,CATALOG[name]['name']+' — '+CATALOG[name]['description'],CATALOG[name].get('compatibility','')) for name in names]
     return rows,groups
 
-def select_menu():
+def select_menu(installed=None):
+    installed=set(installed or ())
     rows,groups=app_menu_rows()
-    selected=set(CATALOG) if len(CATALOG)==1 else choose_rows('Apps',rows,groups=groups)
+    selected=choose_rows('Apps',rows,chosen=installed,allow_empty=True,groups=groups,installed=installed)
     if selected is None:return None
-    features=[(key,spec['name']+' · '+feature['label'],'Optional packages: '+', '.join(feature['packages'])) for name,spec in CATALOG.items() if name in selected for key,feature in spec['optional'].items()]
+    features=[(key,spec['name']+' · '+feature['label'],'Optional packages: '+', '.join(feature['packages'])) for name,spec in CATALOG.items() if name in selected-installed for key,feature in spec['optional'].items()]
     if features:
         options=choose_rows('Optional features',features,allow_empty=True)
         if options is None:return None
@@ -543,25 +556,26 @@ def main(argv=None):
         return 0
     if args.dry_run and args.uninstall is None:parser.error('--dry-run requires --uninstall')
     if args.uninstall is not None:return remove_apps(args)
-    if not any((args.list,args.plan,args.install,args.check,args.bundle)) and sys.stdin.isatty() and sys.stdout.isatty():
-        action=input('Action: [Enter] Install/update, [u] Uninstall, [q] Quit: ').strip().lower()
-        if action=='q':return 0
-        if action=='u':args.uninstall=[];return remove_apps(args)
-        if action:parser.error('Unknown action')
     if args.list:
         for key,value in CATALOG.items():print(f'{key:15} {value["description"]}')
         return 0
     if args.bundle:bundle(sources(args.source_root),args.bundle,args.bundle_app);return 0
     options={k for k in features if getattr(args,k)}
     names=args.plan or args.install or args.check
+    removals=[];installed=None
     if not names:
         if not sys.stdin.isatty() or not sys.stdout.isatty():parser.error('Use --plan or --install outside an interactive terminal')
-        selected=select_menu()
+        installed=set(uninstall.read(directories())['apps'])&set(CATALOG)
+        selected=select_menu(installed)
         if selected is None:return 0
-        names=[n for n in CATALOG if n in selected];options=selected-set(names)
+        desired=selected&set(CATALOG)
+        names=sorted(desired-installed);removals=sorted(installed-desired)
+        options=selected-set(CATALOG)
+        if not names and not removals:
+            print('No changes. Installed apps were kept.');return 0
         if 'simpleplayer' in names:
             args.music_dir=input('Music folder [~/Music]: ').strip() or '~/Music'
-        args.app_choices=choose_preferences()
+        if names:args.app_choices=choose_preferences()
     names=list(CATALOG) if 'all' in names else list(dict.fromkeys(names))
     for key in options:
         if not any(key in CATALOG[name]['optional'] for name in names):parser.error('--'+key.replace('_','-')+' requires its owning app')
@@ -592,10 +606,24 @@ def main(argv=None):
             stage_apps(root,names,options,stage,Path(temp))
         print('Staged under '+str(stage/'.local')+'; no packages, settings or services changed.')
         return 0
-    show_plan(names,options,args)
+    if names:show_plan(names,options,args)
+    if installed is not None:
+        print('\nChanges to apply:')
+        print('  Install: '+(', '.join(names) or 'none'))
+        print('  Uninstall: '+(', '.join(removals) or 'none'))
+        print('  Keep: '+(', '.join(sorted(installed-set(removals))) or 'none'))
+        if removals:print('Settings, personal data, modified files and shared resources needed by remaining apps are retained.')
     if args.plan:return 0
     if not args.yes and input('\nContinue? [y/N] ').strip().lower()!='y':print('Cancelled.');return 0
-    install(args,names,options)
+    # Install first: a failed or cancelled build must not remove existing apps.
+    if names and install(args,names,options) is not True:return 0
+    if removals:
+        current=set(uninstall.read(directories())['apps'])&set(CATALOG)
+        if current!=installed|set(names):
+            raise ValueError('Installed apps changed during this session. Reopen the menu before removing apps.')
+        removal_args=argparse.Namespace(**vars(args))
+        removal_args.uninstall=removals;removal_args.yes=True
+        return remove_apps(removal_args)
     return 0
 if __name__=='__main__':
     try:sys.exit(main())

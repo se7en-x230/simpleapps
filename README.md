@@ -87,6 +87,8 @@ The source installer supports **Linux with Python 3.11+ and preinstalled depende
 ./install --install simpleplayer
 ```
 
+Run `./install` without arguments to manage apps interactively: installed apps start checked; check to install, uncheck to uninstall, and press Enter to review. Unchanged apps are kept. Use `--install APP` to update an existing app.
+
 Run as your normal user; package installation uses sudo. The installer builds sources locally. Commands go into `~/.local/bin`; add that directory to PATH if needed. Installation does not replace your desktop or enable services, account sync, autostart or key bindings.
 
 ```sh

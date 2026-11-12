@@ -10,7 +10,9 @@ Unpack the source archive, enter its `simpleinstaller` folder, then run:
 ./simpleinstaller
 ```
 
-Choose apps with Space; j/k or arrows move, a toggles all, Enter continues, q cancels. The list scrolls in smaller terminals. A second screen offers optional features only for the selected apps. New installations ask for shared terminal/browser/file-manager/media/mail commands; Enter keeps desktop defaults. Existing preferences are retained.
+Apps tracked by Simpleinstaller start checked. Leave them checked to keep them, check additional apps to install them, or uncheck installed apps to uninstall them. Space toggles an app; j/k or arrows move, a toggles all, Enter reviews the changes, and q cancels. Leaving everything unchanged does nothing. The list scrolls in smaller terminals. A second screen offers optional features only for newly selected apps.
+
+The review lists installs, removals, and apps to keep before confirmation. New apps install first; a failed or cancelled install does not remove existing apps. Uninstall retains settings, personal data, modified files, and shared resources needed by remaining apps. Detection uses installer receipts; older/manual installations need one explicit `--install APP` to register their files. Use `--install APP` to update or repair an already installed app. New installations ask for shared terminal/browser/file-manager/media/mail commands; Enter keeps desktop defaults. Existing preferences are retained.
 
 Review packages and compatibility before continuing. If packages are missing, the installer invokes `sudo pacman -Syu --needed` with a separate pacman confirmation. It uses only configured repositories and does not run an AUR helper. The full upgrade avoids partial upgrades. No package transaction happens for --plan or --check.
 
@@ -62,7 +64,7 @@ Builds are staged before app files are installed. Changed files are backed up an
 
 ## Uninstall
 
-Run `./simpleinstaller` and choose `u` for the uninstall selection menu, or:
+Run `./simpleinstaller`, uncheck the installed apps you want to remove, and review the plan. Alternatively:
 
 ```sh
 ./simpleinstaller --uninstall simpleplayer --dry-run
