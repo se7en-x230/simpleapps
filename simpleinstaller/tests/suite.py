@@ -43,6 +43,12 @@ class Suite(unittest.TestCase):
   rows=[(str(n),'App '+str(n),'Details') for n in range(20)]
   with patch.object(i['curses'],'curs_set'),patch.object(i['curses'],'wrapper',side_effect=lambda f:f(Screen([ord('G'),32,10]))):self.assertEqual(i['choose_rows']('Test',rows),{'19'})
   with patch.object(i['curses'],'curs_set'),patch.object(i['curses'],'wrapper',side_effect=lambda f:f(Screen([10]))):self.assertEqual(i['choose_rows']('Options',rows,allow_empty=True),set())
+  groups={str(n):'First' if n<10 else 'Second' for n in range(20)}
+  with patch.object(i['curses'],'curs_set'),patch.object(i['curses'],'wrapper',side_effect=lambda f:f(Screen([ord('G'),32,ord('g'),32,10]))):self.assertEqual(i['choose_rows']('Groups',rows,groups=groups),{'0','19'})
+  apps,groups=i['app_menu_rows']();self.assertEqual(set(groups),set(i['CATALOG']))
+  for group,_ in i['APP_GROUPS']:
+   labels=[label for key,label,_ in apps if groups[key]==group]
+   self.assertEqual(labels,sorted(labels,key=str.casefold))
  def test_preferences_and_default_preservation(self):
   with tempfile.TemporaryDirectory() as td:
    r=Path(td);stage=r/'stage';app=stage/'.local/share/applications/simplelock.desktop';app.parent.mkdir(parents=True);app.write_text('Exec=simplelock\n')

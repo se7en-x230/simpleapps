@@ -353,52 +353,74 @@ need one reinstall to register their files. Keep this folder for uninstall/updat
         with tarfile.open(target,'w:gz') as archive:archive.add(out,arcname=folder)
     print('Source bundle:',target)
 
-def choose_rows(title,rows,chosen=None,allow_empty=False):
+def choose_rows(title,rows,chosen=None,allow_empty=False,groups=None):
     chosen=set(chosen or ());cursor=0;offset=0
+    entries=[];positions={};last_group=None
+    for index,(rowkey,_,_) in enumerate(rows):
+        group=(groups or {}).get(rowkey)
+        if group and group!=last_group:
+            entries.append((None,group));last_group=group
+        positions[index]=len(entries);entries.append((index,None))
     def menu(screen):
         nonlocal cursor,offset
         try:curses.curs_set(0)
         except curses.error:pass
-        normal=0;heading=curses.A_BOLD;active=curses.A_REVERSE;muted=0
+        normal=0;heading=curses.A_BOLD;active=curses.A_REVERSE;muted=0;selected=curses.A_BOLD
         try:
             curses.start_color()
             if curses.has_colors():
-                # Explicit colours keep the menu readable with terminal themes.
-                bg,fg,accent,red=(235,230,173,88) if curses.COLORS>=256 else (0,7,3,1)
-                for pair,front,back in ((1,fg,bg),(2,accent,bg),(3,fg,red),(4,fg,bg)):
+                bg,fg,accent,red,dim=(235,252,214,88,245) if curses.COLORS>=256 else (0,7,3,1,7)
+                for pair,front,back in ((1,fg,bg),(2,accent,bg),(3,fg,red),(4,dim,bg)):
                     curses.init_pair(pair,front,back)
                 normal=curses.color_pair(1);heading=curses.color_pair(2)|curses.A_BOLD
-                active=curses.color_pair(3)|curses.A_BOLD;muted=curses.color_pair(4)
+                active=curses.color_pair(3);muted=curses.color_pair(4)
+                selected=curses.color_pair(2)
                 screen.bkgd(' ',normal)
         except curses.error:pass
         screen.keypad(True)
         while True:
             screen.erase();height,width=screen.getmaxyx()
-            panel_width=min(100,width-4);left=max(2,(width-panel_width)//2)
-            def line(y,text,style=None):
-                if 0<=y<height-1:
-                    try:screen.addnstr(y,left,text,max(0,panel_width),normal if style is None else style)
+            panel_width=min(104,width-4);left=max(2,(width-panel_width)//2)
+            def line(y,text,style=None,x=0):
+                if 0<=y<height-1 and x<panel_width:
+                    try:screen.addnstr(y,left+x,text,max(0,panel_width-x),normal if style is None else style)
                     except curses.error:pass
-            if height<12 or width<48:
-                line(0,'Enlarge terminal to 48 × 12. Q cancels.')
+            if height<14 or width<48:
+                line(0,'Enlarge terminal to 48 × 14. Q cancels.')
             else:
-                capacity=min(len(rows),height-10)
-                offset=max(0,min(offset,cursor));offset=max(offset,cursor-capacity+1)
-                line(1,'SIMPLEINSTALLER · '+title,heading)
-                line(2,f'{len(chosen)} selected · Shared resources are included',muted)
-                line(3,'─'*panel_width,muted)
-                for n,(key,label,detail) in enumerate(rows[offset:offset+capacity],offset):
-                    text=(' ● ' if key in chosen else ' ○ ')+label
-                    line(4+n-offset,text.ljust(panel_width),active if n==cursor else normal)
-                bottom=4+capacity
+                stride=2 if height>=30 else 1
+                capacity=max(1,min(len(entries),(height-13)//stride))
+                position=positions[cursor]
+                offset=max(0,min(offset,position));offset=max(offset,position-capacity+1)
+                line(1,'Simpleinstaller',heading)
+                line(2,title+'  /  '+((groups or {}).get(rows[cursor][0]) or 'Choose what you need'),normal)
+                line(4,f'{len(chosen)} selected    ·    Shared components included automatically',muted)
+                name_width=min(25,max(len(row[1].split(' — ',1)[0].split(' · ',1)[0]) for row in rows)+2)
+                for slot,(n,group) in enumerate(entries[offset:offset+capacity]):
+                    y=6+slot*stride
+                    if n is None:
+                        line(y,'  '+group.upper(),heading)
+                        continue
+                    rowkey,label,detail=rows[n]
+                    name,sep,description=label.partition(' — ')
+                    if not sep:name,sep,description=label.partition(' · ')
+                    focused=n==cursor
+                    if focused:line(y,' '*panel_width,active)
+                    line(y,('› ' if focused else '  ')+('[✓] ' if rowkey in chosen else '[ ] '),active if focused else selected if rowkey in chosen else muted)
+                    line(y,name,active|curses.A_BOLD if focused else normal,x=6)
+                    if panel_width>=85 and description:
+                        line(y,description,active if focused else muted,x=6+name_width)
+                bottom=6+capacity*stride
                 line(bottom,'─'*panel_width,muted)
-                line(bottom+1,rows[cursor][2],muted)
-                line(bottom+2,'j/k Move · Space Select · a All · Enter Next · q Quit',muted)
-                if len(rows)>capacity:line(bottom+3,f'{cursor+1} / {len(rows)} · g First · G Last',muted)
-                elif not chosen and not allow_empty:line(bottom+3,'Select at least one app to continue.',muted)
+                label=rows[cursor][1]
+                description=label.split(' — ',1)[-1].split(' · ',1)[-1]
+                line(bottom+1,description,normal)
+                line(bottom+2,rows[cursor][2],muted)
+                line(bottom+4,'Space  Select     Enter  Continue     a  All     q  Quit',heading)
+                line(bottom+5,f'↑/↓ or j/k  Move    {cursor+1} / {len(rows)}    g/G  First/last',muted)
             screen.refresh();key=screen.getch()
             if key in (ord('q'),27):return None
-            if height<12 or width<48:continue
+            if height<14 or width<48:continue
             if key in (curses.KEY_DOWN,ord('j'),14):cursor=(cursor+1)%len(rows)
             elif key in (curses.KEY_UP,ord('k'),16,11):cursor=(cursor-1)%len(rows)
             elif key in (curses.KEY_HOME,ord('g')):cursor=0
@@ -412,9 +434,23 @@ def choose_rows(title,rows,chosen=None,allow_empty=False):
     return curses.wrapper(menu)
 
 
+APP_GROUPS = (
+    ('Everyday', ('simplebookmarks','simpleclip','simplefiles','simplenotes','simplepicker','simpletimer')),
+    ('Organize', ('simplecalendar','simplecontacts','simplegarmin','simplemail')),
+    ('Media', ('simplecapture','simpleimage','simplepdf','simplephoto','simpleplayer','simpletag')),
+    ('Desktop', ('simple-tools','simplelock','simplepanel','simpletorrent','simplewallpaper')),
+)
+
+def app_menu_rows():
+    groups={name:group for group,names in APP_GROUPS for name in names}
+    order={group:index for index,(group,_) in enumerate(APP_GROUPS)}
+    names=sorted(CATALOG,key=lambda name:(order.get(groups.get(name),len(order)),CATALOG[name]['name'].casefold()))
+    rows=[(name,CATALOG[name]['name']+' — '+CATALOG[name]['description'],CATALOG[name].get('compatibility','')) for name in names]
+    return rows,groups
+
 def select_menu():
-    rows=[(name,spec['name']+' — '+spec['description'],spec.get('compatibility','')) for name,spec in CATALOG.items()]
-    selected=set(CATALOG) if len(CATALOG)==1 else choose_rows('Apps',rows)
+    rows,groups=app_menu_rows()
+    selected=set(CATALOG) if len(CATALOG)==1 else choose_rows('Apps',rows,groups=groups)
     if selected is None:return None
     features=[(key,spec['name']+' · '+feature['label'],'Optional packages: '+', '.join(feature['packages'])) for name,spec in CATALOG.items() if name in selected for key,feature in spec['optional'].items()]
     if features:
