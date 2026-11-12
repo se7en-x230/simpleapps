@@ -19,9 +19,9 @@ gray=np.asarray(m.enhance(im,{'Saturation':-100}));assert np.array_equal(gray[:,
 with tempfile.TemporaryDirectory() as d:
  p=Path(d)/'photo.png';im.save(p);original=p.read_bytes();data=m.read(p)
  settings={'Contrast':20,'Shadows':30,'Saturation':15}
- target=m.save(p,data,settings);assert target.name=='photo~2.png'
+ target=m.save(p,data,settings);assert target.name=='photo~1.png'
  assert np.array_equal(np.asarray(Image.open(target)),np.asarray(m.enhance(data[0],settings)))
- assert m.save(p,data,{}).name=='photo~3.png';assert p.read_bytes()==original
+ assert m.save(p,data,{}).name=='photo~2.png';assert p.read_bytes()==original
  p.write_bytes(b'changed')
  try:m.save(p,data,{})
  except ValueError:pass

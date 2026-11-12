@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Conservative local enhancement; save a separate SDR copy."""
 from pathlib import Path
-import os,re,sys,tempfile,threading,io,argparse,json
+import os,re,sys,tempfile,threading,io,argparse,json,errno,shutil
 import numpy as np
 from PIL import Image,ImageOps,ImageCms,ImageFilter,ImageDraw
 
@@ -123,6 +123,24 @@ def portrait_blur(im,mask,amount):
     if im.mode=='RGBA':result.putalpha(im.getchannel('A'))
     return result
 
+def publish_copy(stage,target):
+    try:
+        os.link(stage,target)
+        return
+    except OSError as error:
+        if error.errno not in (errno.EPERM,errno.EOPNOTSUPP,errno.EXDEV,errno.ENOSYS):
+            raise
+    # Cloud/FUSE mounts may support ordinary files but not hard links.
+    # Exclusive creation retains the no-overwrite guarantee during numbering.
+    with stage.open('rb') as source:
+        output=target.open('xb')
+        try:
+            with output:
+                shutil.copyfileobj(source,output)
+        except BaseException:
+            target.unlink(missing_ok=True)
+            raise
+
 def save(p,data,settings,rect=None,mask=None):
     im,small,lift,kind,before,profile,exif=data
     if signature(p)!=before:raise ValueError('Original changed; reopen it before saving.')
@@ -144,10 +162,10 @@ def save(p,data,settings,rect=None,mask=None):
         if ext in ('jpg','webp'):kwargs['quality']=95
         result.save(stage,**kwargs)
         if signature(p)!=before:raise ValueError('Original changed while saving.')
-        m=re.fullmatch(r'(.*)~([0-9]+)',p.stem);stem=m[1] if m else p.stem;n=max(2,int(m[2])+1) if m else 2
+        m=re.fullmatch(r'(.*)~([0-9]+)',p.stem);stem=m[1] if m else p.stem;n=max(1,int(m[2])+1) if m else 1
         while True:
             target=p.with_name(f'{stem}~{n}.{ext}')
-            try:os.link(stage,target);return target
+            try:publish_copy(stage,target);return target
             except FileExistsError:n+=1
 
 UI_CONTROLS=(*CONTROLS,'Portrait blur','Zoom')
@@ -220,7 +238,7 @@ def main(argv):
                 button=Gtk.Button(label=label);button.connect('clicked',callback);self.crop_tools.append(button)
             self.crop_info=Gtk.Label(hexpand=True,xalign=0);self.crop_tools.append(self.crop_info)
             self.status=Gtk.Label(xalign=0,wrap=True);box.append(self.status);self.status.set_visible(False)
-            self.footer=Gtk.Label(label='j/k: select · h/l: adjust · v: before/after · c: crop · b: blur brush · s: save ~2 copy · ?: all keys',xalign=0);box.append(self.footer)
+            self.footer=Gtk.Label(label='j/k: select · h/l: adjust · v: before/after · c: crop · b: blur brush · s: save numbered copy · ?: all keys',xalign=0);box.append(self.footer)
             display=Gdk.Display.get_default()
             appearance=Gtk.CssProvider();appearance.load_from_data(b'window.simplephoto { background: @simple_bg; color: @simple_fg; } window.simplephoto .photo-heading { color: @simple_heading; font-size: 18px; font-weight: bold; margin-right: 12px; } window.simplephoto .photo-filename { color: @simple_muted; } window.simplephoto button { background: @simple_button; color: @simple_fg; border: 1px solid @simple_border; border-radius: 9px; box-shadow: none; } window.simplephoto button:hover { background: @simple_hover; } window.simplephoto scale trough { background: @simple_button; } window.simplephoto scale highlight { background: @simple_heading; } window.simplephoto scale slider { background: @simple_fg; border: 1px solid @simple_border; box-shadow: none; } window.simplephoto .photo-selected { color: @simple_heading; font-weight: bold; }')
             Gtk.StyleContext.add_provider_for_display(display,appearance,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION+2)

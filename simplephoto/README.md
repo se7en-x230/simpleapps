@@ -6,7 +6,7 @@ Run `./simplephoto [--crop] [FILE ...]`. Without a filename, an Open dialog appe
 
 Brightness, contrast, highlights, shadows, saturation, vibrance, warmth and tint start at zero. The baseline is the original photograph's existing processing, not a reproduction of Google's proprietary Pixel algorithms. Embedded colour profiles are converted to sRGB before editing and previewing. Unsupported or invalid profiles produce an error instead of silently being ignored.
 
-Save creates a full-resolution copy alongside the source, numbered `photo~2.jpg`, `photo~3.jpg`, etc. The crop and adjustments are combined in one export. Originals are never overwritten. JPEG/WebP use quality 95; other supported stills save as PNG. These are SDR exports; HDR gain maps and Motion Photo video are not preserved. Basic EXIF and the working colour profile are retained; these can include location metadata. Files changed since opening are rejected when saving.
+Save creates a full-resolution copy alongside the source, numbered `photo~1.jpg`, `photo~2.jpg`, etc. Existing versions are skipped. Filesystems without hard-link support (such as cloud mounts) use an exclusive copy instead. The crop and adjustments are combined in one export. Originals are never overwritten. JPEG/WebP use quality 95; other supported stills save as PNG. These are SDR exports; HDR gain maps and Motion Photo video are not preserved. Basic EXIF and the working colour profile are retained; these can include location metadata. Files changed since opening are rejected when saving.
 
 ## Keys
 
