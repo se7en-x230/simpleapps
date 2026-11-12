@@ -16,8 +16,9 @@ changes selection without leaving search. The Shuffle/In order buttons play the
 currently browsed folder. The red button follows the current playback order,
 including keyboard playback and reopening the player; click a row or use l to browse into a collection.
 
-Search is hidden by default; only / reveals and focuses it. Escape hides search
-and clears the filter. j/k selects, h/l browses,
+Search is focused by default. Ctrl+J/K selects while typing; Ctrl+Enter switches to navigation and / returns to search. Escape closes the
+window immediately from any folder. Playback continues independently.
+j/k selects, h (or Alt+Left) goes back and l opens a folder,
 gg/G selects first/last; gh returns to the main music folder. Space pauses, n/p skips tracks, q closes. In search, letters
 type normally. Ctrl+R refreshes the cached library index explicitly.
 
@@ -48,3 +49,32 @@ Provider references: https://docs.radio-browser.info/ and https://github.com/yt-
 Online search results never start playback automatically: select a result, then press Enter, click Play or double-click. A single click only selects; Enter while a search is still pending requests results without queuing playback. Artwork is decoded before display; unavailable images retain the configured idle/default image. YouTube playlist tracks can recover their thumbnail after restarting the app.
 
 Ctrl+H / Ctrl+L switch to the previous / next source, wrapping between Local, Radio and YouTube. They also work while searching; switching sources does not change playback.
+
+## Shared base and portable installation
+
+Uses the shared C/GTK4 base in `simple-common`. Python UI code calls the same native library through a thin adapter. Shared theme and keyboard adapters replace separate implementations; app-specific commands and content remain local.
+
+Requires Linux and Python 3.11+ for the source installer. Building the shared base requires a C compiler, make, pkg-config and GTK4 >= 4.12 development files. Install dependencies using your distribution’s package manager; package names can differ.
+
+- Libraries / pkg-config modules: `gtk4 >= 4.12`, `json-c`.
+- Python imports: none beyond the standard library for the base app.
+- Required commands: `cc`, `make`, `pkg-config`, `python3`, `mpv`, `flock`, `ffmpeg`, `xdg-open`, `bash`, `find`, `sort`, `realpath`.
+- Optional Audio visualization: `cava`.
+- Optional YouTube streaming: `yt-dlp`.
+- Desktop requirements: GTK desktop; PulseAudio/PipeWire for optional Cava.
+
+From the suite checkout (no pacman or distro detection on this path):
+
+```sh
+./install --dependencies simpleplayer
+./install --check simpleplayer
+./install --no-packages --install simpleplayer
+```
+
+To build a relocatable staging tree without changing your installation:
+
+```sh
+./install --install simpleplayer --stage "$PWD/package-simpleplayer"
+```
+
+Keep `simple-common` alongside the app sources. Staged files are under `.local/`; move that prefix as a unit so executables, shared libraries and resources stay together. Individual C Makefiles also accept `PREFIX`/`DESTDIR` where documented. See [portable builds](../docs/portability.md) for Debian/Arch dependency examples and limitations.

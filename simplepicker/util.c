@@ -297,7 +297,20 @@ gboolean copy_text(const char *s) {
   g_bytes_unref(b);
   return ok;
 }
-char *data_path(const char *n) { return path_join(data_dir, n); }
+char *data_path(const char *n) {
+  /* Bookmark data belongs to Simplebookmarks; retain old installations and
+     explicit Picker data directories until they are migrated. */
+  if (g_str_has_prefix(n, "bookmark") && !g_getenv("SIMPLEPICKER_DATA_DIR")) {
+    char *dir = g_build_filename(g_get_user_data_dir(), "simplebookmarks", NULL);
+    char *current = path_join(dir, "bookmarks.json");
+    char *legacy = path_join(data_dir, "bookmarks.json");
+    gboolean use_new = g_file_test(current, G_FILE_TEST_EXISTS) || !g_file_test(legacy, G_FILE_TEST_EXISTS);
+    char *result = path_join(use_new ? dir : data_dir, n);
+    g_free(dir);g_free(current);g_free(legacy);
+    return result;
+  }
+  return path_join(data_dir, n);
+}
 J *history(const char *n, const char *f) {
   char *p = data_path(n);
   J *j = read_json(p, f);
@@ -319,6 +332,9 @@ gboolean save_data(const char *n, J *j) {
 int data_lock(const char *n) {
   g_mkdir_with_parents(data_dir, 0700);
   char *p = data_path(n);
+  char *dir = g_path_get_dirname(p);
+  g_mkdir_with_parents(dir, 0700);
+  g_free(dir);
   FILE *f = fopen(p, "a");
   g_free(p);
   if (!f) {

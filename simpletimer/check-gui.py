@@ -12,6 +12,11 @@ def patched(win):
     present(win);app=win.get_application()
     def check():
         try:
+            assert win.has_css_class('simple-app')
+            assert app.tabs['countdown'].get_parent().has_css_class('simple-tabs')
+            app.key(None,Gdk.KEY_l,0,Gdk.ModifierType.CONTROL_MASK);assert app.mode=='stopwatch'
+            app.tabs['meditation'].set_active(True);assert app.mode=='meditation'
+            assert sum(b.get_active() for b in app.tabs.values())==1
             app.select('countdown');app.entry.set_text('2');app.apply()
             assert model.value('countdown')==120
             app.action();assert model.state('countdown')['since'] is not None

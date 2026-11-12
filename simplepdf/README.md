@@ -43,3 +43,32 @@ PDF tools run in the background with a completion/error message. Closing is bloc
 This first version focuses on reading and export. It does not yet edit annotations, fill forms, select text with the mouse, or show continuous/two-page spreads. Internal links are clickable in the unrotated view; external web/mail links ask before opening. Rotation and colour inversion affect the view, not the saved PDF. Password-protected documents can be opened; external exports may require a decrypted copy. Printing uses GTK's print dialog.
 
 Install/uninstall uses the standard Simpleinstaller receipts. It does not change default PDF associations or compositor keys.
+
+## Shared base and portable installation
+
+Uses the shared C/GTK4 base in `simple-common`. Python UI code calls the same native library through a thin adapter. Shared theme and keyboard adapters replace separate implementations; app-specific commands and content remain local.
+
+Requires Linux and Python 3.11+ for the source installer. Building the shared base requires a C compiler, make, pkg-config and GTK4 >= 4.12 development files. Install dependencies using your distribution’s package manager; package names can differ.
+
+- Libraries / pkg-config modules: `gtk4 >= 4.12`, `poppler-glib`.
+- Python imports: `gi`, `cairo`.
+- Required commands: `python3`, `cc`, `make`, `pkg-config`.
+- Optional PDF text/page extraction and lossless compression: `pdftotext`, `qpdf`.
+- Optional Searchable PDF OCR: `ocrmypdf`.
+- Desktop requirements: GTK desktop; Poppler PDF rendering.
+
+From the suite checkout (no pacman or distro detection on this path):
+
+```sh
+./install --dependencies simplepdf
+./install --check simplepdf
+./install --no-packages --install simplepdf
+```
+
+To build a relocatable staging tree without changing your installation:
+
+```sh
+./install --install simplepdf --stage "$PWD/package-simplepdf"
+```
+
+Keep `simple-common` alongside the app sources. Staged files are under `.local/`; move that prefix as a unit so executables, shared libraries and resources stay together. Individual C Makefiles also accept `PREFIX`/`DESTDIR` where documented. See [portable builds](../docs/portability.md) for Debian/Arch dependency examples and limitations.

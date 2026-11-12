@@ -1,4 +1,4 @@
-Simplepanel — small, fixed-layout Mango status bar
+Simplepanel — small, configurable Wayland status bar
 ================================================
 Status: installed as the active Mango panel. Noctalia autostart is disabled;
 ~/.config/noctalia/ is preserved. Notifications are deferred.
@@ -9,12 +9,84 @@ only the compact status line; no tray, plugin engine or control-center UI.
 
 Displays:
   occupied/active/urgent Mango tags and focused-window app/title
-  current MPRIS artist/title and playback state
+  current MPRIS artist/album/title and playback state
+  thin playback progress bar below the song text when duration is available
   clock in the existing format: %a %d  %H:%M
   network receive/transmit speed on the default IPv4 route
   default audio output volume/mute
-  existing invest.sh output, refreshed hourly
+  optional custom modules, including a personal investment module
   first reachable paired KDE Connect device's charge/charging state
+
+Configuration and custom modules
+--------------------------------
+Keep the existing INI file at ~/.config/simplepanel/config.ini. No new config
+parser or service is needed. Restart with simplepanel-session restart after edits.
+A minimal portable example is shipped in examples/config.ini (installed under
+~/.local/share/simplepanel/examples/).
+
+  [panel]
+  environment=mango
+
+  [layout]
+  left=workspaces;window-title;
+  center=music;clock;
+  right=network;volume;invest;battery;phone;
+
+  [custom.invest]
+  command=~/.config/simplepanel/scripts/invest
+  interval=3600
+  timeout=10
+  max_chars=24
+
+Layout lists use semicolons, including an optional trailing semicolon. Empty
+lists hide that section. Each module may appear once across all three sections.
+Builtins: workspaces, window-title, music (including optional Cava), clock,
+network, volume, battery, phone. Omitted modules do not start their polling;
+volume_osd can still independently enable audio events. Legacy cava/phone/clock
+switches remain supported. Old layouts and panel.invest=true still work; the
+legacy investment switch now creates a custom subprocess module.
+
+Environment choices: auto, mango, hyprland, sway, generic. Auto checks the current
+session variables; generic is for other Wayland window managers with layer-shell.
+Only Mango currently has built-in workspace and focused-title integration.
+Other choices run the common modules and omit those two widgets; they do NOT
+contact Mango sockets. Hyprland/Sway workspace adapters are not yet implemented.
+Their layer-shell display support is upstream-supported but has not been tested
+on this machine. KDE/GNOME are outside this project's supported scope. A normal
+GTK window remains available through --preview for development, not as a desktop
+panel replacement. Layer-shell is required for the normal docked panel.
+
+Each [custom.NAME] defines a command and optional interval (seconds, 1–86400,
+default 60), timeout (seconds, 1–300, default 5), max_chars (1–200, default 24),
+and on_click. Names may contain letters, numbers, hyphens, and underscores;
+builtin names are reserved. At most 32 custom modules can be defined. Only names
+included in the layout are started. Missing commands, unknown layout names,
+duplicate placement, and invalid numeric settings fail --check before launch.
+
+Commands run through /bin/sh -c, as your user. Use executable scripts for anything
+more involved than one command. They receive SIMPLEPANEL_CONFIG and
+SIMPLEPANEL_ENVIRONMENT. The first stdout line becomes plain label text; remaining
+lines become a plain tooltip. No markup or JSON parser is required. Output is
+limited to 4096 bytes; stderr is discarded. A failed poll keeps the previous value
+and sets an explanatory tooltip. Polls never overlap. Timeouts and panel shutdown
+kill the command's process group, including ordinary child processes.
+
+Optional on_click commands are asynchronous and independently limited to one
+running action per module, with the same timeout/output limits. Use short actions;
+a long-running GUI should instead be started through its own service/launcher.
+Without on_click, clicking a custom module opens the existing system dashboard.
+Demo previews show module names and never execute custom commands.
+
+The optional examples/invest script calls simplepanel --market-summary. This
+short-lived helper uses the same [markets] settings and hourly disk cache as the
+dashboard; it exits after printing the prices. The running panel no longer polls
+market files or contains investment-specific widgets. New installs do not enable
+investment by default. No embedded Python/browser, runtime plugin loader, or
+persistent module daemon has been added.
+
+Checks:
+  make check                         # config + market-cache regression tests
+  python3 tests/check-modules.py --runtime  # GTK display needed; no visible window
 
 Architecture:
   C, GTK4 + gtk4-layer-shell, GLib/GIO, json-c, libpulse/glib integration.
@@ -24,7 +96,7 @@ Architecture:
   command polling in the panel. Noctalia is not a dependency.
   Network counters: kernel sysfs once per second; music discovery every 5s,
   phone status every 30s. Bounded asynchronous D-Bus calls.
-  Optional external helpers: existing invest.sh (curl/jq inside that script),
+  Optional external helpers: configured custom commands,
   and Cava. Cava is off by default. Missing helpers do not close the panel.
   Cairo renderer avoids allocating a large GPU rendering context.
 
@@ -61,7 +133,7 @@ not a claim about total installed library footprint.
 
 Known limits before replacing Noctalia:
   one selected output; no monitor hotplug reconfiguration yet
-  requires Mango's current JSON IPC protocol
+  workspace/title integration currently requires Mango's JSON IPC protocol
   auto network selection uses IPv4 default routes (set interface explicitly
   for IPv6-only or non-default traffic); no sum of VPN/bridge interfaces
   phone report uses the first reachable paired device
@@ -137,10 +209,8 @@ the estimate. Near-full batteries, heat and phone use can reduce the rate.
 The estimator uses memory only; restarting the panel starts a fresh history.
 Thresholds and timing are in phone-charge.h. No phone-side app is needed.
 
-The system dashboard Phone card shares the panel charging-speed estimate, showing
-slow/normal/rapid and net percentage points per minute. A session-local snapshot
-is accepted only for the same device, level and charging state, for up to 90 seconds.
-Without a fresh snapshot the dashboard collects its own readings.
+The system dashboard Phone card shows battery percentage and charging status on
+one line. It does not calculate or display charging-speed estimates.
 
 System dashboard appearance inherits simple/theme.css, including simple_heading.
 Optional per-dashboard overrides belong in simplepanel/dashboard.css; legacy
@@ -155,5 +225,63 @@ cards alongside the network graph; keyboard navigation follows their positions.
 
 Configurable clocks and quotes
 -----------------------------
+Super+G includes a timezone converter beneath the clocks, defaulting to Thailand
+(Asia/Bangkok) → Germany (Europe/Berlin). Both dropdowns are searchable. Enter a
+date (YYYY-MM-DD) and 24-hour time (HH:MM) in the source timezone. Thailand and
+Germany appear first, followed by configured cities and system timezones.
+Date/time fields use direct typing and keyboard adjustment, without picker buttons.
+Results update immediately, including destination date and UTC offset. The
+result is shown as a compact source-time → destination-time line with a subtle
+highlight and date/day-change information alongside it. The swap
+button reverses the zones while preserving the instant. Inputs start at the current
+Thailand time. Timezone rules apply for the date;
+invalid dates and nonexistent local times during daylight-saving jumps are rejected.
+During a repeated local hour, GLib selects the standard-time occurrence.
+Text fields retain direct typing; timezone search popovers use their
+normal keyboard controls.
+The dashboard opens focused on the source timezone. Date/time fields do not
+automatically select text; selections clear when leaving a field. h/l moves between converter controls
+and between hours/minutes. j/k and -/+ decrease/increase the selected time unit,
+or one day in the date field; crossing midnight updates the date. Enter moves to
+the next field. Tab moves normally; Esc returns to CPU, then Esc closes. From
+the CPU/memory/disk row, k/Up returns to the converter. Dropdowns use j/k to select
+zones; open their search to type normally. Now has been removed. Section order is
+system details, markets, world clocks, converter, then system cards.
+The compact three-column system grid fits the desktop screen. System details
+can be collapsed and start collapsed on shorter screens; graph/control shortcuts
+remain available through card tooltips. Remind opens a native calendar draft for
+the selected future instant, with a notification at the event start. Review its
+title and save to sync. Android calendar sync and notifications must be enabled;
+this is a calendar notification, not an Android Clock alarm. No event is saved
+merely by opening the draft. Times are converted to the calendar's local timezone.
+
 See ../docs/simplepanel.md for [dashboard], [markets], and panel clock settings.
 Defaults retain the original four cities, XAUT/BTC and THB. Market fetching is now standalone (curl), with configuration-specific caches.
+
+## Shared base and portable installation
+
+Uses the shared C/GTK4 base in `simple-common`. Python UI code calls the same native library through a thin adapter. Shared theme and keyboard adapters replace separate implementations; app-specific commands and content remain local.
+
+Requires Linux and Python 3.11+ for the source installer. Building the shared base requires a C compiler, make, pkg-config and GTK4 >= 4.12 development files. Install dependencies using your distribution’s package manager; package names can differ.
+
+- Libraries / pkg-config modules: `gtk4 >= 4.12`, `json-c`, `gtk4-layer-shell-0`, `gio-unix-2.0`, `libpulse-mainloop-glib`.
+- Python imports: none beyond the standard library for the base app.
+- Required commands: `cc`, `make`, `pkg-config`, `python3`, `fastfetch`, `curl`.
+- Optional Panel audio visualization: `cava`.
+- Desktop requirements: Panel: Wayland layer-shell; workspace/title integration: Mango. Dashboard: normal GTK window..
+
+From the suite checkout (no pacman or distro detection on this path):
+
+```sh
+./install --dependencies simplepanel
+./install --check simplepanel
+./install --no-packages --install simplepanel
+```
+
+To build a relocatable staging tree without changing your installation:
+
+```sh
+./install --install simplepanel --stage "$PWD/package-simplepanel"
+```
+
+Keep `simple-common` alongside the app sources. Staged files are under `.local/`; move that prefix as a unit so executables, shared libraries and resources stay together. Individual C Makefiles also accept `PREFIX`/`DESTDIR` where documented. See [portable builds](../docs/portability.md) for Debian/Arch dependency examples and limitations.

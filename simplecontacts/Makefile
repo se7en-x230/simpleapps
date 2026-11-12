@@ -18,3 +18,6 @@ clean:
 simplecontacts-native: ../simple-common/simple-images.h ../simple-common/daylight-art.h
 
 simplecontacts-native: ../simple-common/simple-keyboard.h
+
+SIMPLE_UI_TARGETS = simplecontacts-native
+include ../simple-common/framework.mk

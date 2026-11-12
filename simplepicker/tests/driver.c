@@ -20,6 +20,9 @@ static gboolean drive(gpointer unused) {
   next_time = g_get_monotonic_time() + 250000;
   if (obj(operation,"wait")) next_time = g_get_monotonic_time() + num(operation,"wait")*1000;
   if (obj(operation,"query")) gtk_editable_set_text(GTK_EDITABLE(m->entry), str(operation,"query"));
+  if (obj(operation,"max_panel_height") && gtk_widget_get_height(m->panel)>num(operation,"max_panel_height")) {
+    g_printerr("TEST: menu panel too tall: %d\n",gtk_widget_get_height(m->panel));exit(96);
+  }
   if (obj(operation,"select")) {
     const char *wanted = str(operation,"select");
     gboolean found=FALSE;
@@ -30,6 +33,7 @@ static gboolean drive(gpointer unused) {
     if (!found) {g_printerr("TEST: row not found: %s\n",wanted);exit(91);}
   }
   if (obj(operation,"expect_preview")) {
+    g_assert_true(gtk_widget_has_css_class(m->preview_box,"card"));
     const char *expected=str(operation,"expect_preview");
     if (!gtk_widget_get_visible(m->preview_box)) {
       if(!preview_deadline) preview_deadline=g_get_monotonic_time()+8000000;

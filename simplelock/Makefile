@@ -11,7 +11,7 @@ LDFLAGS += -Wl,--gc-sections
 OBJECTS = lock.o auth.o util.o vendor/toml.o
 all: simplelock
 simplelock: $(OBJECTS)
-	$(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS)
+	$(CC) $(LDFLAGS) $(filter %.o,$^) -o $@ $(LDLIBS)
 lock.o: lock.c view.c fit.c lock.h lock.h auth.h
 $(OBJECTS): lock.h
 install: simplelock
@@ -47,3 +47,7 @@ $(OBJECTS): ../simple-common/simple-theme.h
 lock.o simplelock-test: ../simple-common/song-progress.h
 
 lock.o: ../simple-common/simple-images.h ../simple-common/daylight-art.h
+
+SIMPLE_UI_TARGETS = simplelock simplelock-test
+include ../simple-common/framework.mk
+$(OBJECTS): ../simple-common/simple-ui.h

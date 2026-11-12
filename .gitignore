@@ -8,3 +8,7 @@ __pycache__/
 /simpleinstaller/wallpaper-packs/
 
 /simplepanel/simplepanel
+
+/simple-common/libsimple-ui.so
+/simplelock/simplelock
+/simpletorrent/simpletorrent

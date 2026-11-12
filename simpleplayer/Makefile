@@ -18,3 +18,6 @@ clean:
 	rm -f simpleplayer-native
 
 simpleplayer-native: ../simple-common/simple-keyboard.h
+
+SIMPLE_UI_TARGETS = simpleplayer-native
+include ../simple-common/framework.mk

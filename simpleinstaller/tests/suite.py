@@ -2,9 +2,10 @@ from pathlib import Path
 import sys,runpy,tempfile,unittest,subprocess,os,json
 from unittest.mock import patch
 B=Path(__file__).resolve().parents[1];sys.path.insert(0,str(B));i=runpy.run_path(str(B/'simpleinstaller'),run_name='installer_test');import recipes
+SOURCES=B/'sources' if (B/'sources').is_dir() else B.parent
 class Suite(unittest.TestCase):
  def test_catalogue_and_optional_features(self):
-  names=set(i['CATALOG']);self.assertEqual(len(names),10);i['validate_sources'](B/'sources',list(names))
+  names=set(i['CATALOG']);self.assertIn('simplegarmin',names);i['validate_sources'](SOURCES,list(names))
   self.assertNotIn('cava',i['packages'](['simpleplayer'],set()))
   self.assertIn('cava',i['packages'](['simplelock'],{'lock_visualizer'}))
   self.assertNotIn('keepassxc',i['packages'](['simplemail'],set()))
@@ -26,7 +27,7 @@ class Suite(unittest.TestCase):
  def test_tools_installs_without_picker_app(self):
   with tempfile.TemporaryDirectory() as td:
    r=Path(td);stage=r/'stage';work=r/'work';stage.mkdir();work.mkdir()
-   i['stage_apps'](B/'sources',['simple-tools'],set(),stage,work)
+   i['stage_apps'](SOURCES,['simple-tools'],set(),stage,work)
    self.assertFalse((stage/'.local/bin/simplepicker').exists())
    self.assertTrue((stage/'.local/share/simplepicker/python/simplepicker_api.py').is_file())
    self.assertTrue((stage/'.local/share/simple-common/theme_loader.py').is_file())

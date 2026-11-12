@@ -4,6 +4,14 @@ Small Linux desktop applications with a shared visual style. Install the apps yo
 
 All apps support Vim-style key bindings, and almost every function can be used from the keyboard. See each app’s page for its shortcuts.
 
+## One base, your choice of apps
+
+Install one app or several. The installer brings in the shared C framework on the
+first GTK app install and reuses it for subsequent apps. There is one installed
+library, not a copy inside each app, and no background framework process.
+Uninstalling an app keeps shared files needed by others; removing the final
+consumer removes the unmodified runtime. Settings and maintained sources remain.
+
 ## Apps and screenshots
 
 Click a screenshot or app name for features, installation and keyboard controls.
@@ -58,9 +66,21 @@ Click a screenshot or app name for features, installation and keyboard controls.
 | [![Simpletimer screenshot](docs/screenshots/simpletimer.png)](docs/simpletimer.md) | [![Simplebookmarks screenshot](docs/screenshots/simplebookmarks.png)](docs/simplebookmarks.md) |
 | Countdown, stopwatch, Pomodoro, fasting and meditation with soft bells | Search, open and manage bookmarks with Vim keys |
 
+| [Simplegarmin](simplegarmin/README.md) | [Simpletag](simpletag/README.md) |
+| :---: | :---: |
+| [![Simplegarmin screenshot](docs/screenshots/simplegarmin.png)](simplegarmin/README.md) | [![Simpletag screenshot](docs/screenshots/simpletag.png)](simpletag/README.md) |
+| Garmin health and activity overview | Picard music metadata review and tagging |
+
+Screenshots use an isolated demo profile with sample content.
+
+## Portable builds
+
+For direct builds on Debian 13 or Arch, dependency lists, optional helpers, and
+custom installation prefixes, see [Portable builds](docs/portability.md).
+
 ## Install from this checkout
 
-The installer currently supports **Arch-based Linux with Python 3 and pacman**. GTK apps can run on other desktops; wallpaper, panel and lock features need the Wayland protocols listed on their app pages.
+The source installer supports **Linux with Python 3.11+ and preinstalled dependencies** using `--no-packages`. Automatic package installation remains Arch/pacman-only. GTK apps can run on other desktops; wallpaper, panel and lock features need the Wayland protocols listed on their app pages.
 
 ```sh
 ./install --plan simpleplayer
@@ -74,6 +94,29 @@ Run as your normal user; package installation uses sudo. The installer builds so
 ```
 
 Uninstallation retains settings, personal data, modified files and shared resources used by remaining apps. System packages and source copies are retained.
+
+## Debian 13 and other distributions
+
+Install the compiler, GTK4 headers and Python GTK bindings first, then use the
+source installer with `--no-packages`:
+
+```sh
+sudo apt update
+sudo apt install git build-essential pkg-config python3 python3-gi \
+  python3-gi-cairo python3-cairo libgtk-4-dev gir1.2-gtk-4.0 \
+  libglib2.0-dev xdg-utils libnotify-bin
+git clone https://github.com/se7en-x230/simpleapps.git
+cd simpleapps
+./install --check simpletimer simplenotes
+./install --no-packages --install simpletimer simplenotes
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+[The full Linux build guide](docs/portability.md) covers Debian dependencies for
+other apps, Arch/Artix, direct Makefile builds, custom prefixes and package
+staging on other distributions. GTK >= 4.12 is required; stock Debian 12 is too
+old. Simplelock additionally needs gtk4-layer-shell >= 1.2, newer than Debian
+13's stock package. Automatic package installation remains pacman-only.
 
 ## Individual installer archives
 
@@ -92,7 +135,21 @@ These are native Linux desktop apps, primarily using GTK, with C and Python impl
 
 Established libraries and tools handle the heavy work: Poppler renders PDFs, GdkPixbuf loads images, Pillow/NumPy process photos, mpv plays media, and grim/Swappy/wf-recorder handle capture. Dependencies vary by app; installing one does not require the whole suite.
 
-The apps share visual and keyboard conventions and a common installer. They do not yet use one uniform UI codebase or configuration format. Runtime settings live under XDG config directories, normally `~/.config`; installed source snapshots live under `~/.local/src`. See each app’s page for its settings and portability limits.
+Apps share the C `libsimple-ui` base for theme loading and native keyboard handling. Python UI code uses a thin native adapter. App-specific layouts, navigation commands and data formats remain local; headless backends use the shared picker for optional menus. Runtime settings live under XDG config directories, normally `~/.config`; installed source snapshots live under `~/.local/src`. See each app’s page for its settings and portability limits.
+
+The shared GTK presentation uses orange upper-left titles, rounded pane cards, alternating gray list rows, orange action buttons and slim tabs with an orange active state. Shortcut suffixes on buttons use `simple_shortcut` (dark gray); set it with the other palette colors in `~/.config/simple/theme.css`. Pane framing and shortcut styling are applied by the shared library, including dynamically created controls.
+
+## Build without a distribution-specific package installer
+
+```sh
+./install --dependencies simplepicker
+./install --check simplepicker
+./install --no-packages --install simplepicker
+```
+
+Use `--install APP --stage DIRECTORY` to build into an empty staging directory
+without installing packages or modifying personal configuration. Each app README
+lists its libraries, Python imports, helper commands and desktop requirements.
 
 ## Source layout
 
@@ -105,3 +162,6 @@ Existing component README files describe developer details and may mention short
 Existing third-party copyright and license notices are retained in the source files. A project-wide distribution license has not yet been selected.
 
 See [keyboard controls](docs/keyboard.md) for focus navigation and app-specific shortcuts.
+
+[Simpletag](simpletag/README.md) provides folder lookup, audio scanning, tag review
+and save/remove controls over Picard 3, using the shared framework and Simplefiles.

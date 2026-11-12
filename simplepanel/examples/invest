@@ -1,0 +1,3 @@
+#!/bin/sh
+# Optional personal module. Uses the panel config's [markets] and shared cache.
+exec simplepanel --market-summary

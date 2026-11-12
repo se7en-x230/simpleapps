@@ -258,8 +258,8 @@ static void web_search_rows(Menu *m, const char *query) {
       g_object_unref(monitor);
     }
     GtkWidget *header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-    GtkWidget *title = gtk_label_new("Web search");
-    gtk_widget_add_css_class(title, "websearch-title");
+    GtkWidget *title = gtk_label_new("Simplepicker · Web search");
+    gtk_widget_add_css_class(title, "title");
     gtk_label_set_xalign(GTK_LABEL(title), 0);
     gtk_widget_set_hexpand(title, TRUE);
     gtk_box_append(GTK_BOX(header), title);
@@ -485,6 +485,13 @@ static int bookmark_add(void) {
   char *label = ask("Bookmark name", g_uri_get_host(uri), "bookmark-new");
   g_uri_unref(uri);
   if (label) {
+    char *category = ask("Bookmark tag (optional)", "", "bookmark-new");
+    if (!category) {
+      g_free(label);
+      g_free(url);
+      return last_error ? 2 : 0;
+    }
+    g_strstrip(category);
     int fd = data_lock("bookmarks.lock");
     if (fd >= 0) {
       J *r = history("bookmarks.json", "[]");
@@ -500,6 +507,8 @@ static int bookmark_add(void) {
           J *b = json_object_new_object();
           setstr(b, "label", *label ? label : url);
           setstr(b, "url", url);
+          if (*category)
+            setstr(b, "category", category);
           json_object_array_add(r, b);
           save_data("bookmarks.json", r);
         }
@@ -508,6 +517,7 @@ static int bookmark_add(void) {
         json_object_put(r);
       close(fd);
     }
+    g_free(category);
     g_free(label);
   }
   g_free(url);

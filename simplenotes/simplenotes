@@ -13,7 +13,7 @@ import json
 LIMIT = 2 * 1024 * 1024
 
 
-DEFAULTS = dict(start_in_search=True, autosave=True, autosave_delay_ms=900, search_contents=True,
+DEFAULTS = dict(start_in_search=False, autosave=True, autosave_delay_ms=900, search_contents=True,
                 font_size=12, wrap_text=True, window_width=1100, window_height=760,
                 sidebar_width=310)
 
@@ -159,6 +159,7 @@ for _keyboard_root in (_KeyboardPath(__file__).resolve().parent.parent / 'simple
         _keyboard_sys.path.insert(0, str(_keyboard_root))
         break
 from simple_keyboard import control_key, dialog_keys
+from simple_ui import attach, bind_search, start_search
 
 
 def main(argv=None):
@@ -192,19 +193,19 @@ def main(argv=None):
             self.connect('activate', self.activate)
 
         def activate(self, *_):
-            self.win = Gtk.ApplicationWindow(application=self, title='Simplenotes')
+            self.win = Gtk.ApplicationWindow(application=self, title='Simplenotes'); attach(self.win)
             self.win.add_css_class('simplenotes'); self.win.set_default_size(options['window_width'], options['window_height'])
             self.win.connect('close-request', self.close)
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
             for side in ('top','bottom','start','end'): getattr(box, 'set_margin_'+side)(12)
             self.win.set_child(box)
             header = Gtk.Box(spacing=8); box.append(header)
-            title = Gtk.Label(label='Simplenotes'); title.add_css_class('heading'); header.append(title)
+            title = Gtk.Label(label='Simplenotes'); title.add_css_class('title'); header.append(title)
             self.title = Gtk.Label(label=str(root), ellipsize=Pango.EllipsizeMode.MIDDLE, xalign=0, hexpand=True); header.append(self.title)
-            for label, callback in [('New [n]',lambda *_:self.new_note()),('Paste [p]',lambda *_:self.paste_new()),('Save',lambda *_:self.save()),('Help [?]',self.help)]:
+            for label, callback in [('New [n]',lambda *_:self.new_note()),('Paste [p]',lambda *_:self.paste_new()),('Save [Ctrl+S]',lambda *_:self.save()),('Help [?]',self.help)]:
                 button = Gtk.Button(label=label); button.connect('clicked',callback); header.append(button)
             self.search = Gtk.Entry(placeholder_text='Search names and note contents — /')
-            self.search.connect('changed', lambda *_:self.search_changed()); self.search.connect('activate',lambda *_:self.focus_list()); box.append(self.search)
+            self.search.connect('changed', lambda *_:self.search_changed()); self.search.connect('activate',lambda *_:self.edit()); box.append(self.search)
             split = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, vexpand=True); split.set_position(options['sidebar_width']); box.append(split)
             self.model = Gtk.StringList.new([]); self.selection = Gtk.SingleSelection.new(self.model)
             factory = Gtk.SignalListItemFactory()
@@ -217,27 +218,23 @@ def main(argv=None):
             scroll = Gtk.ScrolledWindow(); scroll.set_child(self.list); split.set_start_child(scroll)
             self.buffer = Gtk.TextBuffer(); self.buffer.set_enable_undo(True)
             self.editor = Gtk.TextView(buffer=self.buffer,wrap_mode=Gtk.WrapMode.WORD_CHAR if options['wrap_text'] else Gtk.WrapMode.NONE,monospace=True,editable=False)
-            self.editor.set_left_margin(16); self.editor.set_right_margin(16); self.editor.set_top_margin(10); self.editor.set_bottom_margin(10)
             self.buffer.connect('changed',self.changed)
-            self.editor_scroll = Gtk.ScrolledWindow(); self.editor_scroll.set_child(self.editor); split.set_end_child(self.editor_scroll)
+            self.editor_scroll = Gtk.ScrolledWindow(vexpand=True,hexpand=True); self.editor_scroll.set_child(self.editor)
+            self.editor_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            self.editor_card.add_css_class('card');self.editor_card.add_css_class('preview-card');self.editor_card.set_margin_start(12)
+            self.editor_card.append(self.editor_scroll);split.set_end_child(self.editor_card)
             self.status = Gtk.Label(xalign=0,wrap=True); box.append(self.status)
             self.guide = Gtk.Label(xalign=0,wrap=True); self.guide.add_css_class('muted'); box.append(self.guide)
             self.theme()
             keys = Gtk.EventControllerKey(); keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE); keys.connect('key-pressed',self.key); self.win.add_controller(keys)
-            self.win.present(); self.focus_list()
-            if options['start_in_search']: self.search.grab_focus()
+            bind_search(self.win,self.search,self.list,'simplenotes',self.move,self.edit,self.focus_list)
+            self.win.present(); self.focus_list(); start_search(self.win,options['start_in_search'])
             self.refresh()
             self.poll = GLib.timeout_add_seconds(3,self.poll_external)
 
         def theme(self):
             display = Gdk.Display.get_default()
-            css = Gtk.CssProvider(); css.load_from_string('@define-color simple_bg #2a2a2a; @define-color simple_fg #e4ded2; @define-color simple_muted #928374; @define-color simple_heading #f3a40a; @define-color simple_button #3b3b3b; @define-color simple_border #49454a; @define-color simple_accent #8b0000; @define-color simple_on_accent #fff5ef;')
-            Gtk.StyleContext.add_provider_for_display(display,css,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-            config = Path(os.environ.get('XDG_CONFIG_HOME',Path.home()/'.config'))/'simple'
-            data = Path(os.environ.get('XDG_DATA_HOME',Path.home()/'.local/share'))/'simple'
-            for path in (config/'aliases.css',config/'theme.css',data/'aliases.css',data/'theme.css'):
-                if path.is_file():
-                    provider=Gtk.CssProvider();provider.load_from_path(str(path));Gtk.StyleContext.add_provider_for_display(display,provider,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION+1);break
+            display = Gdk.Display.get_default()
             css=Gtk.CssProvider();css.load_from_string('.simplenotes, .simplenotes listview, .simplenotes textview, .simplenotes textview text { background: @simple_bg; color: @simple_fg; } .simplenotes .heading { color: @simple_heading; font-size: 18px; font-weight: bold; } .simplenotes row { padding: 8px; } .simplenotes button, .simplenotes entry { background: @simple_button; color: @simple_fg; border: 1px solid @simple_border; border-radius: 8px; box-shadow: none; } .simplenotes .muted { color: @simple_muted; opacity: 1; } .simplenotes row:selected, .simplenotes row:selected:hover, .simplenotes row:selected:backdrop { background: @simple_accent; color: @simple_on_accent; } .simplenotes row:selected label { color: @simple_on_accent; }')
             Gtk.StyleContext.add_provider_for_display(display,css,Gtk.STYLE_PROVIDER_PRIORITY_USER+1)
             font=Gtk.CssProvider();font.load_from_string('.simplenotes textview { font-size: '+str(options['font_size'])+'pt; }')
@@ -427,7 +424,7 @@ def main(argv=None):
             return True
 
         def help(self,*_):
-            dialog=Gtk.MessageDialog(transient_for=self.win,modal=True,buttons=Gtk.ButtonsType.CLOSE,text='Simplenotes keys',secondary_text='LIST: j/k or arrows select · gg/G first/last · Ctrl+u/d jump · l preview · i/Enter edit · / search · Esc close\n\nNOTES: n new · Shift+n new folder · p new from clipboard · a append clipboard · y copy text · Shift+y copy file reference · Shift+r recover draft · Ctrl+r refresh\n\nEDITOR: i enters text editing; type normally. Ctrl+Enter returns to notes. Esc closes and saves. Ctrl+s save · Ctrl+Shift+s save copy · Ctrl+z undo · Ctrl+Shift+z redo · Ctrl+a/c/v select/copy/paste\n\nPreview uses h/j/k/l to move and gg/G for start/end. Esc closes; q also closes outside text entry. Notes autosave after a short pause. External changes are never silently overwritten.')
+            dialog=Gtk.MessageDialog(transient_for=self.win,modal=True,buttons=Gtk.ButtonsType.CLOSE,text='Simplenotes keys',secondary_text='LIST: j/k or arrows select · gg/G first/last · Ctrl+u/d jump · l preview · i/Enter edit · / search · Ctrl+J/K select while searching · Ctrl+Enter list · Esc closes\n\nNOTES: n new · Shift+n new folder · p new from clipboard · a append clipboard · y copy text · Shift+y copy file reference · Shift+r recover draft · Ctrl+r refresh\n\nEDITOR: i enters text editing; type normally. Ctrl+Enter returns to notes. Esc closes and saves. Ctrl+s save · Ctrl+Shift+s save copy · Ctrl+z undo · Ctrl+Shift+z redo · Ctrl+a/c/v select/copy/paste\n\nPreview uses h/j/k/l to move and gg/G for start/end. Esc closes; q also closes outside text entry. Notes autosave after a short pause. External changes are never silently overwritten.')
             dialog_keys(dialog)
             dialog.connect('response',lambda d,*_:d.destroy());dialog.present()
 

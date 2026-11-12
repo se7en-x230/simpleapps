@@ -49,7 +49,7 @@ class Resources(Gtk.Application):
         css=Gtk.CssProvider();_load_simple_css(css,str(_Path(_path_os.environ.get('XDG_CONFIG_HOME',_Path.home()/'.config'))/'simplepicker/dashboard/info.css'));Gtk.StyleContext.add_provider_for_display(display,css,Gtk.STYLE_PROVIDER_PRIORITY_USER+3)
         body=box(spacing=14);body.add_css_class('sound-body');self.window.set_child(body)
         head=box(False);name=label(title,'sound-title');name.set_hexpand(True);head.append(name)
-        close=Gtk.Button(icon_name='window-close-symbolic');close.connect('clicked',lambda *_:self.window.close());head.append(close);body.append(head)
+        body.append(head)
         self.status=label('Reading usage…','sound-hint');body.append(self.status)
         scroll=Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER,vexpand=True);self.content=box(spacing=12);scroll.set_child(self.content);body.append(scroll)
         self.summary=box();self.summary.add_css_class('sound-card');self.content.append(self.summary)

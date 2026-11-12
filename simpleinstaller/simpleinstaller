@@ -38,11 +38,12 @@ def sources(override=None):
     if override:return Path(override).expanduser().resolve()
     # Installed tool and Newinit share the maintained sources. Bundles carry a snapshot.
     if (HERE/'sources').is_dir():return HERE/'sources'
+    if (HERE.parent/'simple-common').is_dir():return HERE.parent
     return Path.home()/'.local/src'
 
 def validate_sources(root,names):
     for name in recipes.roots_for(names):
-        required=CATALOG[name]['source_files'] if name in CATALOG else (['Makefile','main.c'] if name=='simplepicker' else ['simple-theme.h','organizer-helper.py','theme_loader.py'])
+        required=CATALOG[name]['source_files'] if name in CATALOG else (['Makefile','main.c'] if name=='simplepicker' else ['simple-theme.h','organizer-helper.py','theme_loader.py','simple-ui.c','simple-ui.h','simple_ui.py','Makefile','framework.mk','framework.css','palette.css'])
         for rel in required:
             if not (root/name/rel).is_file():raise ValueError(f'Missing source: {root/name/rel}')
     for rel in ('default-idle.png','default-avatar.png'):
@@ -107,6 +108,7 @@ def destination(rel,dirs):
     parts=rel.parts
     if parts[:2]==('.local','share'):return dirs['data']/Path(*parts[2:])
     if parts[:2]==('.local','bin'):return dirs['bin']/Path(*parts[2:])
+    if parts[:2]==('.local','include'):return dirs['home']/'.local/include'/Path(*parts[2:])
     if parts[:2]==('.local','lib'):return dirs['home']/'.local/lib'/Path(*parts[2:])
     raise ValueError(f'Unexpected staged destination: {rel}')
 
@@ -163,6 +165,10 @@ def payload(stage,dirs,names,options,music,choices=None):
                 line='Exec='+(executable if plain else '"'+escaped+'"')+(' '+' '.join(arguments) if arguments else '')
             lines.append(line)
         path.write_text('\n'.join(lines)+'\n')
+    # Preserve the established launcher alias; update its native target instead.
+    alias=dirs['bin']/'simplepicker'
+    if alias in files and alias.is_symlink() and alias.resolve()==(dirs['bin']/'simplepicker-native').resolve():
+        del files[alias]
     return files
 
 def safe_target(path):
@@ -307,7 +313,8 @@ def bundle(root,target,app=None):
 
 This standalone bundle installs **{title}**. It contains its source and required
 shared components. It does not require Newinit or another installer bundle.
-Requires an Arch-based Linux system with Python 3 and pacman. Run as your normal
+Requires Linux with Python 3.11+, a C compiler and the app dependencies.
+Use --no-packages after installing dependencies on non-Arch systems. Run as your normal
 user; only package installation uses sudo. Compatibility: {CATALOG[app].get('compatibility','GTK desktop')}.
 
 Extract this archive, open a terminal in `{folder}`, then run:
@@ -426,7 +433,10 @@ def show_plan(names,options,args):
     print('\nSIMPLEINSTALLER — review\n')
     print('Apps: '+', '.join(CATALOG[n]['name'] for n in names))
     print('Optional features: '+(', '.join(sorted(options)) or 'none'))
-    print('Packages (existing installations reused):\n  '+' '.join(packages(names,options)))
+    if args.no_packages:
+        print('Using preinstalled system dependencies; no package manager will run.')
+        print('Required libraries: '+', '.join(sorted({module for name in names for module in CATALOG[name]['modules']})))
+    else:print('Packages (existing installations reused):\n  '+' '.join(packages(names,options)))
     print('Build recipes: '+str(root))
     print('Install: user binaries, app data, menu entries, missing defaults and source trees.')
     print('Existing settings are preserved; changed program files are backed up.')
@@ -461,6 +471,8 @@ def main(argv=None):
     for key,feature in features.items():parser.add_argument('--'+key.replace('_','-'),dest=key,action='store_true',help=feature['label'])
     parser.add_argument('--music-dir',default='~/Music')
     parser.add_argument('--source-root',help='Directory containing the maintained Simple app sources')
+    parser.add_argument('--stage',type=Path,metavar='DIRECTORY',help='Build --install apps into an empty staging directory without changing your installation')
+    parser.add_argument('--dependencies',nargs='+',choices=[*CATALOG,'all'],help='List portable build/runtime requirements')
     parser.add_argument('--no-packages',action='store_true',help='Require existing dependencies; do not run pacman')
     parser.add_argument('--yes',action='store_true',help='Accept app file changes (pacman still asks separately)')
     parser.add_argument('--bundle',metavar='FILE.tar.gz',help='Export portable source bundle')
@@ -469,7 +481,19 @@ def main(argv=None):
     args=parser.parse_args(argv)
     if args.bundle_app and not args.bundle:parser.error('--bundle-app requires --bundle')
     verify_bundle()
-    if sum(bool(getattr(args,k)) for k in ('list','plan','install','check','bundle','list_wallpapers'))+int(args.uninstall is not None)>1:parser.error('Choose one action')
+    if sum(bool(getattr(args,k)) for k in ('list','plan','install','check','bundle','list_wallpapers','dependencies'))+int(args.uninstall is not None)>1:parser.error('Choose one action')
+    if args.stage and not args.install:parser.error('--stage requires --install')
+    if args.dependencies:
+        names=list(CATALOG) if 'all' in args.dependencies else args.dependencies
+        for name in names:
+            spec=CATALOG[name]
+            print(name+' — '+spec['compatibility'])
+            print('  Build: C compiler, make, pkg-config' if name!='simplewallpaper' else '  Build: none')
+            print('  Libraries: '+(', '.join(spec['modules']) or 'none'))
+            print('  Python imports: '+(', '.join(spec.get('imports',[])) or 'none'))
+            print('  Commands: '+', '.join(spec['commands']))
+            for feature in spec['optional'].values():print('  Optional '+feature['label']+': '+', '.join(feature.get('commands',[])+feature.get('imports',[])))
+        return 0
     if args.list_wallpapers:
         for key,info in wallpaper_pack.catalog(HERE).items():print(key+' — '+info['label'])
         return 0
@@ -512,6 +536,18 @@ def main(argv=None):
         errors=dependency_errors(names,options)
         print('\n'.join(errors) if errors else 'Dependencies ready: '+', '.join(names))
         return 1 if errors else 0
+    if args.stage:
+        if options:parser.error('--stage currently accepts base apps only; optional features can be installed through --install')
+        root=sources(args.source_root);validate_sources(root,names)
+        errors=dependency_errors(names,options)
+        if errors:raise ValueError('\n'.join(errors))
+        stage=args.stage.expanduser().resolve()
+        if stage.exists() and any(stage.iterdir()):raise ValueError('Staging directory must be empty')
+        stage.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='simple-build-',dir=stage.parent) as temp:
+            stage_apps(root,names,options,stage,Path(temp))
+        print('Staged under '+str(stage/'.local')+'; no packages, settings or services changed.')
+        return 0
     show_plan(names,options,args)
     if args.plan:return 0
     if not args.yes and input('\nContinue? [y/N] ').strip().lower()!='y':print('Cancelled.');return 0

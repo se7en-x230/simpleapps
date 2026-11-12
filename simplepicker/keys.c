@@ -33,11 +33,11 @@ static gboolean merge_keys(GKeyFile *dest, const char *path, gboolean required) 
     g_key_file_set_string(dest,"navigation",names[i],value);
     g_free(value);
   }
-  if(g_key_file_has_key(src,"interaction","vim_navigation",NULL)){
-    GError *error=NULL;
-    gboolean enabled=g_key_file_get_boolean(src,"interaction","vim_navigation",&error);
+  const char *interaction[]={"vim_navigation","start_in_search","escape_closes"};
+  for(guint i=0;i<G_N_ELEMENTS(interaction);i++)if(g_key_file_has_key(src,"interaction",interaction[i],NULL)) {
+    GError *error=NULL;gboolean enabled=g_key_file_get_boolean(src,"interaction",interaction[i],&error);
     if(error){fail("Key bindings: %s: %s",path,error->message);g_error_free(error);}
-    else g_key_file_set_boolean(dest,"interaction","vim_navigation",enabled);
+    else g_key_file_set_boolean(dest,"interaction",interaction[i],enabled);
   }
   g_strfreev(names);g_key_file_unref(src);return !last_error;
 }

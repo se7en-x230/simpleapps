@@ -483,7 +483,10 @@
     "simplephoto": {
       "name": "SimplePhoto",
       "description": "Compact photo adjustments and cropping with Vim keys",
-      "build": [],
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
       "runtime": [
         "python",
         "python-gobject",
@@ -492,9 +495,14 @@
         "python-numpy",
         "gtk4"
       ],
-      "modules": [],
+      "modules": [
+        "gtk4 >= 4.12"
+      ],
       "commands": [
-        "python3"
+        "python3",
+        "cc",
+        "make",
+        "pkg-config"
       ],
       "imports": [
         "gi",
@@ -513,7 +521,10 @@
     "simplefiles": {
       "name": "Simplefiles",
       "description": "Fast graphical file chooser with Yazi-style keys",
-      "build": [],
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
       "runtime": [
         "python",
         "python-gobject",
@@ -523,7 +534,10 @@
         "gtk4 >= 4.12"
       ],
       "commands": [
-        "python3"
+        "python3",
+        "cc",
+        "make",
+        "pkg-config"
       ],
       "imports": [
         "gi"
@@ -540,7 +554,10 @@
     "simplenotes": {
       "name": "Simplenotes",
       "description": "Plain-text notes, clipboard capture and keyboard editing",
-      "build": [],
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
       "runtime": [
         "python",
         "python-gobject",
@@ -550,7 +567,10 @@
         "gtk4 >= 4.12"
       ],
       "commands": [
-        "python3"
+        "python3",
+        "cc",
+        "make",
+        "pkg-config"
       ],
       "imports": [
         "gi"
@@ -618,7 +638,10 @@
     "simplecapture": {
       "name": "Simplecapture",
       "description": "Region and desktop screenshots with annotation and clipboard output",
-      "build": [],
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
       "runtime": [
         "python",
         "python-gobject",
@@ -636,7 +659,10 @@
         "grim",
         "slurp",
         "swappy",
-        "wl-copy"
+        "wl-copy",
+        "cc",
+        "make",
+        "pkg-config"
       ],
       "imports": [
         "gi"
@@ -669,7 +695,10 @@
     "simpletimer": {
       "name": "Simpletimer",
       "description": "Countdown, stopwatch, Pomodoro, fasting and meditation with interval bells",
-      "build": [],
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
       "runtime": [
         "python",
         "python-gobject",
@@ -679,7 +708,10 @@
         "gtk4 >= 4.12"
       ],
       "commands": [
-        "python3"
+        "python3",
+        "cc",
+        "make",
+        "pkg-config"
       ],
       "imports": [
         "gi"
@@ -705,7 +737,10 @@
     "simplepdf": {
       "name": "Simplepdf",
       "description": "Keyboard-first PDF reader with search, bookmarks and export tools",
-      "build": [],
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
       "runtime": [
         "python",
         "python-gobject",
@@ -718,7 +753,10 @@
         "poppler-glib"
       ],
       "commands": [
-        "python3"
+        "python3",
+        "cc",
+        "make",
+        "pkg-config"
       ],
       "imports": [
         "gi",
@@ -758,7 +796,10 @@
     "simpleimage": {
       "name": "Simpleimage",
       "description": "Fast keyboard-first image viewer and thumbnail browser",
-      "build": [],
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
       "runtime": [
         "python",
         "python-gobject",
@@ -771,7 +812,10 @@
         "gdk-pixbuf-2.0"
       ],
       "commands": [
-        "python3"
+        "python3",
+        "cc",
+        "make",
+        "pkg-config"
       ],
       "imports": [
         "gi",
@@ -788,7 +832,10 @@
     "simplebookmarks": {
       "name": "Simplebookmarks",
       "description": "Search and manage bookmarks with Vim keys",
-      "build": [],
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
       "runtime": [
         "python",
         "python-gobject",
@@ -798,7 +845,10 @@
         "gtk4 >= 4.12"
       ],
       "commands": [
-        "python3"
+        "python3",
+        "cc",
+        "make",
+        "pkg-config"
       ],
       "imports": [
         "gi"
@@ -809,6 +859,82 @@
       "source_files": [
         "simplebookmarks",
         "README.md"
+      ]
+    },
+    "simplegarmin": {
+      "name": "Simplegarmin",
+      "description": "Garmin Connect health and activity dashboard",
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
+      "runtime": [
+        "gtk4",
+        "python",
+        "python-gobject"
+      ],
+      "modules": [
+        "gtk4 >= 4.12"
+      ],
+      "commands": [
+        "cc",
+        "make",
+        "pkg-config",
+        "python3"
+      ],
+      "imports": [
+        "gi"
+      ],
+      "optional": {},
+      "recipe": "garmin",
+      "compatibility": "GTK desktop; internet and Garmin Personal API key for live data",
+      "source_files": [
+        "main.py",
+        "client.py",
+        "details.py"
+      ]
+    },
+    "simpletag": {
+      "name": "Simpletag",
+      "description": "Keyboard-driven Picard folder tagging frontend",
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
+      "runtime": [
+        "python",
+        "python-gobject",
+        "gtk4",
+        "picard",
+        "chromaprint"
+      ],
+      "modules": [
+        "gtk4 >= 4.12"
+      ],
+      "commands": [
+        "python3",
+        "cc",
+        "make",
+        "pkg-config",
+        "picard",
+        "picard-cli",
+        "fpcalc"
+      ],
+      "imports": [
+        "gi"
+      ],
+      "optional": {},
+      "recipe": "tag",
+      "compatibility": "Linux GTK desktop; Picard 3 with the included bridge; internet for MusicBrainz/AcoustID",
+      "source_files": [
+        "main.py",
+        "client.py",
+        "launcher",
+        "config.toml",
+        "keys.ini",
+        "bridge/__init__.py",
+        "bridge/engine.py",
+        "bridge/MANIFEST.toml"
       ]
     }
   }

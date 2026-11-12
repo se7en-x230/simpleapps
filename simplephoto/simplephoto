@@ -163,6 +163,7 @@ for _keyboard_root in (_KeyboardPath(__file__).resolve().parent.parent / 'simple
         _keyboard_sys.path.insert(0, str(_keyboard_root))
         break
 from simple_keyboard import control_key, dialog_keys
+from simple_ui import attach
 
 
 def main(argv):
@@ -180,14 +181,14 @@ def main(argv):
             self.zoom=None;self.view_center=(.5,.5);self.pan_origin=None;self.focused=False;self.was_fullscreen=False;self.mask=None;self.brush_mode=False;self.overlay=True;self.brush_radius=25;self.brush_last=None;self.cursor=None;self.overlay_pix=None;self.history=[];self.fast_crop=False;self.crop_mode=args.crop;self.original=False;self.rect=None;self.pix=None;self.active=0;self.anchor=None
             self.connect('activate',self.activate)
         def activate(self,*_):
-            self.win=Gtk.ApplicationWindow(application=self,title='SimplePhoto');self.win.add_css_class('simplephoto');self.win.set_default_size(1100,850)
+            self.win=Gtk.ApplicationWindow(application=self,title='SimplePhoto'); attach(self.win);self.win.add_css_class('simplephoto');self.win.set_default_size(1100,850)
             self.win.connect('close-request',lambda *_:self.busy)
             self.win.connect('notify::is-active',lambda win,*_:self.release_zoom() if not win.is_active() else None)
             box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=5)
             for side in ('top','bottom','start','end'):getattr(box,'set_margin_'+side)(8)
             self.win.set_child(box)
             row=Gtk.Box(spacing=8);box.append(row);self.header=row
-            self.app_name=Gtk.Label(label='SimplePhoto',xalign=0);self.app_name.add_css_class('photo-heading');row.append(self.app_name)
+            self.app_name=Gtk.Label(label='Simplephoto',xalign=0);self.app_name.add_css_class('title');row.append(self.app_name)
             self.title=Gtk.Label(label='',xalign=0,hexpand=True);self.title.add_css_class('photo-filename');self.title.set_ellipsize(3);row.append(self.title)
             for label,callback in [('Open [o]',self.choose),('Crop [c]',self.toggle_crop),('Blur [b]',self.toggle_brush),('Save [s]',self.save_clicked)]:
                 b=Gtk.Button(label=label);b.connect('clicked',callback);row.append(b)
@@ -221,13 +222,6 @@ def main(argv):
             self.status=Gtk.Label(xalign=0,wrap=True);box.append(self.status);self.status.set_visible(False)
             self.footer=Gtk.Label(label='j/k: select · h/l: adjust · v: before/after · c: crop · b: blur brush · s: save ~2 copy · ?: all keys',xalign=0);box.append(self.footer)
             display=Gdk.Display.get_default()
-            fallback=Gtk.CssProvider();fallback.load_from_data(b'@define-color simple_bg #2a2a2a; @define-color simple_fg #e4ded2; @define-color simple_muted #928374; @define-color simple_heading #f3a40a; @define-color simple_button #3b3b3b; @define-color simple_hover #454545; @define-color simple_border #49454a;')
-            Gtk.StyleContext.add_provider_for_display(display,fallback,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-            config=Path(os.environ.get('XDG_CONFIG_HOME',str(Path.home()/'.config')))/'simple'
-            data=Path(os.environ.get('XDG_DATA_HOME',str(Path.home()/'.local/share')))/'simple'
-            for theme in (config/'aliases.css',config/'theme.css',data/'aliases.css',data/'theme.css'):
-                if theme.is_file():
-                    shared=Gtk.CssProvider();shared.load_from_path(str(theme));Gtk.StyleContext.add_provider_for_display(display,shared,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION+1);break
             appearance=Gtk.CssProvider();appearance.load_from_data(b'window.simplephoto { background: @simple_bg; color: @simple_fg; } window.simplephoto .photo-heading { color: @simple_heading; font-size: 18px; font-weight: bold; margin-right: 12px; } window.simplephoto .photo-filename { color: @simple_muted; } window.simplephoto button { background: @simple_button; color: @simple_fg; border: 1px solid @simple_border; border-radius: 9px; box-shadow: none; } window.simplephoto button:hover { background: @simple_hover; } window.simplephoto scale trough { background: @simple_button; } window.simplephoto scale highlight { background: @simple_heading; } window.simplephoto scale slider { background: @simple_fg; border: 1px solid @simple_border; box-shadow: none; } window.simplephoto .photo-selected { color: @simple_heading; font-weight: bold; }')
             Gtk.StyleContext.add_provider_for_display(display,appearance,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION+2)
             css=Gtk.CssProvider();css.load_from_data(b'.photo-scale { min-height: 16px; padding: 2px 0; margin: 0; } .photo-scale trough { min-height: 3px; } .photo-scale slider { min-width: 10px; min-height: 10px; } ')

@@ -57,7 +57,7 @@ class Menu:
         self.selected = None
 
     def choose(self, items, *, prompt=None, descriptions=None, preview=None, icons=None,
-               on_select=None, shortcuts=(), width=None, height=570):
+               on_select=None, shortcuts=(), width=None, height=570, search_items=None):
         """items: {stable_id: label}, or a list of unique strings. Returns ID/Action/None."""
         from ui import normalize, show_menu
         keys_used = set()
@@ -66,6 +66,8 @@ class Menu:
                 raise ValueError('Shortcut keys must be unique')
             keys_used.add(key.lower())
         labels = dict(items) if isinstance(items, dict) else {item: item for item in items}
+        visible_keys = list(labels)
+        labels.update(search_items or {})
         if not all(isinstance(key, str) and isinstance(label, str) for key, label in labels.items()):
             raise ValueError('Menu IDs and labels must be strings')
         keys = list(labels)
@@ -73,7 +75,7 @@ class Menu:
 
         def search(query):
             words = normalize(query).split()
-            return [key for key in keys if all(word in searchable[key] for word in words)]
+            return [key for key in keys if all(word in searchable[key] for word in words)] if words else visible_keys
 
         def activate(key):
             self.selected = key
@@ -82,7 +84,7 @@ class Menu:
         result = show_menu(search, prompt=prompt or self.title, title=self.title,
                            width=width or self.width, height=height, default_icon=self.icon,
                            labels=labels, subtitles=descriptions, icons=icons, theme=self.theme, keys=self.keys, key_scope=self.key_scope,
-                           selected_row=keys.index(self.selected) if self.selected in keys else 0,
+                           selected_row=visible_keys.index(self.selected) if self.selected in visible_keys else 0,
                            text_preview=preview.get if isinstance(preview, dict) else preview,
                            shortcuts=[('left', 'Back', BACK), *shortcuts], on_select=activate)
         if isinstance(result, str) and result in labels:
@@ -181,13 +183,19 @@ class ToolMenu:
         menu = self.menus.setdefault(group, Menu(self.title if group is None else self.title + ' / ' + group,
                                                icon=self.config.get('group_icons', {}).get(group, self.config.get('icon', 'view-list-symbolic')),
                                                theme=self.config.get('theme'), keys=self.config.get('keys'), key_scope=self.config.get('key_scope')))
-        labels, targets, icons = {}, {}, {}
+        labels, targets, icons, search_items, descriptions = {}, {}, {}, {}, {}
         for tool in self.tools.values():
             category = tool.get('group')
             if group is None and category:
                 key = 'group:' + category
                 labels[key], targets[key] = category, ('group', category)
                 if category in self.config.get('group_icons', {}): icons[key] = self.config['group_icons'][category]
+                tool_key = 'tool:' + tool['id']
+                search_items[tool_key] = tool['name']
+                targets[tool_key] = ('tool', tool)
+                descriptions[tool_key] = category
+                if 'icon' in tool:
+                    icons[tool_key] = tool['icon']
             elif category == group:
                 key = 'tool:' + tool['id']
                 labels[key], targets[key] = tool['name'], ('tool', tool)
@@ -196,7 +204,8 @@ class ToolMenu:
         labels['navigation:back'] = 'Close' if group is None else 'Back'
         icons['navigation:back'] = 'window-close-symbolic' if group is None else 'go-previous-symbolic'
         while True:
-            choice = menu.choose(labels, icons=icons,
+            choice = menu.choose(labels, icons=icons, search_items=search_items,
+                                 descriptions=descriptions,
                                  height=min(self.config.get('max_height', 570),
                                             max(570, 160 + 48 * len(labels))))
             if choice is None or choice == BACK or choice == 'navigation:back':

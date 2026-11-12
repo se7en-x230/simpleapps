@@ -4,8 +4,8 @@
 @define-color simple_bg #2a2a2a;
 @define-color simple_surface #333333;
 @define-color simple_button #3b3b3b;
-@define-color simple_hover #454545;
-@define-color simple_selected #464646;
+@define-color simple_hover shade(@simple_accent, 0.8);
+@define-color simple_selected @simple_hover;
 @define-color simple_border #49454a;
 @define-color simple_fg #e4ded2;
 @define-color simple_bright #f2eadf;
@@ -15,7 +15,7 @@
 @define-color simple_panel_accent #f3a40a;
 /* Shared app headings; app styles inherit this default. */
 @define-color simple_heading @simple_panel_accent;
-@define-color simple_accent_hover #d90000;
+@define-color simple_accent_hover @simple_hover;
 @define-color simple_on_accent #fff5ef;
 @define-color simple_attention #f4c76a;
 @define-color simple_success #91c48b;
@@ -345,3 +345,6 @@ window.system-dashboard .loss { color:@simple_error; }
 window.system-dashboard button.control-card { background:transparent; background-image:none; padding:0; border:0; border-radius:12px; box-shadow:none; outline:none; }
 window.system-dashboard button.control-card:hover .dash-system { background:@simple_hover; }
 window.system-dashboard button.control-card:focus-visible { outline:2px solid @simple_accent; outline-offset:2px; }
+
+/* Shortcut suffix on orange action buttons. */
+@define-color simple_shortcut #51483d;

@@ -25,7 +25,10 @@ Avoid parallel "make -j clean install": clean can race the build. Plain
 "make clean install PREFIX=..." works, but separate commands are clearer.
 PROGRAM defaults to simplepicker-native; simplepicker is a symlink to it. DESTDIR is supported for package/staging builds.
 
-Requires: a C compiler, make, pkg-config, GTK4, gtk4-layer-shell, GIO and json-c
+See ../docs/portability.md for Debian 13 and Arch dependency commands.
+Run make check-deps before building on a new host.
+
+Requires: a C compiler, make, pkg-config, GTK4 >= 4.12, gtk4-layer-shell >= 1.0, GIO and json-c
 headers/libraries. The TOML parser is vendored, so builds need no downloads.
 The binary dynamically links GTK and other system libraries.
 
@@ -91,8 +94,8 @@ Provider helpers are invoked when needed: qalc, cliphist, wl-clipboard, file,
 fontconfig, xdg-open, ffmpeg (video clipboard previews), and compositor IPC tools. Clipboard recording remains
 session/autostart configuration; the launcher does not start another recorder.
 Power commands and your bookmark editor/terminal are configured argv arrays.
-The bundled wtype fallback is the existing x86_64 helper; install a system wtype
-for another architecture. The picker itself builds from source on that host.
+Install a system wtype for paste simulation. The build does not install a
+prebuilt architecture-specific wtype helper. The picker builds from source on the host.
 
 Personal scripted menus
 ----------------------
@@ -217,3 +220,31 @@ One shared playback lock prevents duplicate audio across views/outputs. Playback
 stops on close/unlock, parent exit, or other audio starting. No MPRIS registration
 is made for the chant, so it does not replace track metadata or the idle layout.
 Requires mpv, pactl, and Python GObject; failures leave the UI/lock functional.
+
+## Shared base and portable installation
+
+Uses the shared C/GTK4 base in `simple-common`. Python UI code calls the same native library through a thin adapter. Shared theme and keyboard adapters replace separate implementations; app-specific commands and content remain local.
+
+Requires Linux and Python 3.11+ for the source installer. Building the shared base requires a C compiler, make, pkg-config and GTK4 >= 4.12 development files. Install dependencies using your distribution’s package manager; package names can differ.
+
+- Libraries / pkg-config modules: `gtk4 >= 4.12`, `gtk4-layer-shell-0`, `gio-unix-2.0`, `json-c`.
+- Python imports: none beyond the standard library for the base app.
+- Required commands: `cc`, `make`, `pkg-config`, `python3`, `xdg-open`, `wl-copy`.
+- Optional Calculator: `qalc`.
+- Desktop requirements: GTK window; Wayland layer-shell when available.
+
+From the suite checkout (no pacman or distro detection on this path):
+
+```sh
+./install --dependencies simplepicker
+./install --check simplepicker
+./install --no-packages --install simplepicker
+```
+
+To build a relocatable staging tree without changing your installation:
+
+```sh
+./install --install simplepicker --stage "$PWD/package-simplepicker"
+```
+
+Keep `simple-common` alongside the app sources. Staged files are under `.local/`; move that prefix as a unit so executables, shared libraries and resources stay together. Individual C Makefiles also accept `PREFIX`/`DESTDIR` where documented. See [portable builds](../docs/portability.md) for Debian/Arch dependency examples and limitations.

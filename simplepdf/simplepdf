@@ -55,6 +55,7 @@ for _keyboard_root in (_KeyboardPath(__file__).resolve().parent.parent / 'simple
         _keyboard_sys.path.insert(0, str(_keyboard_root))
         break
 from simple_keyboard import control_key
+from simple_ui import attach
 
 
 def main():
@@ -80,10 +81,10 @@ def main():
             self.record={};self.statefile=None;self.search_generation=0
 
         def do_activate(self):
-            self.win=Gtk.ApplicationWindow(application=self,title='Simplepdf')
+            self.win=Gtk.ApplicationWindow(application=self,title='Simplepdf'); attach(self.win)
             self.win.set_default_size(cfg['window_width'],cfg['window_height'])
             self.win.connect('close-request',self.close)
-            css=Gtk.CssProvider();css.load_from_data(b'window {background:#272625;color:#d8ceb0;} .title {color:#d99a00;font-weight:bold;} button,entry {background:#35322e;color:#d8ceb0;} row:selected {background:#700909;}')
+            css=Gtk.CssProvider();css.load_from_data(b'window {background:@simple_bg;color:@simple_fg;} .title {color:@simple_heading;font-weight:bold;} button,entry {background:@simple_button;color:@simple_fg;} row:selected {background:@simple_accent;}')
             Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(),css,Gtk.STYLE_PROVIDER_PRIORITY_USER+1)
             box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=4);self.win.set_child(box)
             bar=Gtk.Box(spacing=6);bar.set_margin_start(8);bar.set_margin_end(8);box.append(bar)

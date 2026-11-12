@@ -1,11 +1,11 @@
-#include "../simple-common/simple-keyboard.h"
+#include "../simple-common/simple-ui.h"
 #include <gtk/gtk.h>
 #include <curl/curl.h>
 #include <json-c/json.h>
 #include "../simple-common/simple-theme.h"
 
 typedef struct { int id; gint64 added; GtkWidget *row,*name,*info,*mark,*bar; gboolean marked, completion_armed; } Row;
-static GtkWidget *win,*list,*search,*status_label;
+static GtkWidget *win,*list,*search,*status_label,*transfer_summary;
 static GPtrArray *rows;
 static GKeyFile *keys;
 static gboolean busy,closed;
@@ -145,9 +145,13 @@ static void render(json_object *o){
     for(gint i=(gint)rows->len-1;i>=0;i--){Row *r=g_ptr_array_index(rows,i);if(!g_hash_table_contains(seen,GINT_TO_POINTER(r->id))){gtk_list_box_remove(GTK_LIST_BOX(list),r->row);g_ptr_array_remove_index(rows,i);}}
     g_hash_table_destroy(seen);gtk_list_box_invalidate_sort(GTK_LIST_BOX(list));gtk_list_box_invalidate_filter(GTK_LIST_BOX(list));
     if(!current()&&rows->len)gtk_list_box_select_row(GTK_LIST_BOX(list),gtk_list_box_get_row_at_index(GTK_LIST_BOX(list),0));
-    char *d=g_format_size(dl),*u=g_format_size(ul),*msg=g_strdup_printf("%u torrents · %d running    ↓ %s/s    ↑ %s/s",rows->len,active,d,u);notice(msg);g_free(d);g_free(u);g_free(msg);
+    char *d=g_format_size(dl),*u=g_format_size(ul);
+    char *summary=g_strdup_printf("All torrents    ↓ Download %s/s    ↑ Upload %s/s",d,u);
+    gtk_label_set_text(GTK_LABEL(transfer_summary),summary);
+    char *msg=g_strdup_printf("%u torrents · %d running",rows->len,active);notice(msg);
+    g_free(d);g_free(u);g_free(summary);g_free(msg);
 }
-static void done(GObject *source,GAsyncResult *result,gpointer data){GError *e=NULL;json_object *o=g_task_propagate_pointer(G_TASK(result),&e);busy=FALSE;if(!closed){if(e)notice(e->message);else if(o)render(o);}g_clear_error(&e);if(o)json_object_put(o);}
+static void done(GObject *source,GAsyncResult *result,gpointer data){GError *e=NULL;json_object *o=g_task_propagate_pointer(G_TASK(result),&e);busy=FALSE;if(!closed){if(e){notice(e->message);gtk_label_set_text(GTK_LABEL(transfer_summary),"All torrents    ↓ Download —    ↑ Upload —");}else if(o)render(o);}g_clear_error(&e);if(o)json_object_put(o);}
 static void request(const char *payload){if(busy){notice("Updating — try again in a moment.");return;}busy=TRUE;GTask *t=g_task_new(NULL,NULL,done,NULL);g_task_set_task_data(t,g_strdup(payload),g_free);g_task_run_in_thread(t,worker);g_object_unref(t);}
 static gboolean poll(gpointer d){if(closed)return G_SOURCE_REMOVE;if(!busy)request(get_request);return G_SOURCE_CONTINUE;}
 static json_object *targets(void){json_object *ids=json_object_new_array();for(guint i=0;i<rows->len;i++){Row *r=g_ptr_array_index(rows,i);if(r->marked)json_object_array_add(ids,json_object_new_int(r->id));}if(!json_object_array_length(ids)&&current())json_object_array_add(ids,json_object_new_int(current()->id));return ids;}
@@ -195,13 +199,12 @@ static void add_dialog(GtkButton *b,gpointer unused){
 static void file_chosen(GObject *source,GAsyncResult *result,gpointer d){GError *e=NULL;GFile *file=gtk_file_dialog_open_finish(GTK_FILE_DIALOG(source),result,&e);if(file){char *path=g_file_get_path(file);if(path&&!closed)add_value(path);g_free(path);g_object_unref(file);}g_clear_error(&e);}
 static void browse(GtkButton *b,gpointer d){GtkFileDialog *f=gtk_file_dialog_new();gtk_file_dialog_set_title(f,"Add .torrent file");gtk_file_dialog_open(f,GTK_WINDOW(win),NULL,file_chosen,NULL);g_object_unref(f);}
 static void move(int delta){Row *r=current();int i=r?gtk_list_box_row_get_index(GTK_LIST_BOX_ROW(r->row)):(delta>0?-1:(int)rows->len);for(i+=delta;i>=0&&i<(int)rows->len;i+=delta){GtkListBoxRow *next=gtk_list_box_get_row_at_index(GTK_LIST_BOX(list),i);if(gtk_widget_get_child_visible(GTK_WIDGET(next))){gtk_list_box_select_row(GTK_LIST_BOX(list),next);gtk_widget_grab_focus(GTK_WIDGET(next));break;}}}
-static gboolean matches(guint key,GdkModifierType mods,const char *group,const char *name,const char *fallback){char *value=g_key_file_get_string(keys,group,name,NULL);char **parts=g_strsplit(value?value:fallback,",",-1);gboolean found=FALSE;for(int i=0;parts[i];i++){guint k;GdkModifierType m;if(gtk_accelerator_parse(g_strstrip(parts[i]),&k,&m)&&gdk_keyval_to_lower(key)==k&&(mods&gtk_accelerator_get_default_mod_mask())==m)found=TRUE;}g_strfreev(parts);g_free(value);return found;}
+static gboolean matches(guint key,GdkModifierType mods,const char *group,const char *name,const char *fallback){if(!strcmp(group,"navigation"))return simple_ui_key_matches("simpletorrent",name,key,mods);char *value=g_key_file_get_string(keys,group,name,NULL);char **parts=g_strsplit(value?value:fallback,",",-1);gboolean found=FALSE;for(int i=0;parts[i];i++){guint k;GdkModifierType m;if(gtk_accelerator_parse(g_strstrip(parts[i]),&k,&m)&&gdk_keyval_to_lower(key)==k&&(mods&gtk_accelerator_get_default_mod_mask())==m)found=TRUE;}g_strfreev(parts);g_free(value);return found;}
 static gboolean keypress(GtkEventControllerKey *c,guint key,guint code,GdkModifierType mods,gpointer d){
 
-    int control_result=simple_control_key(GTK_WINDOW(win),key,mods);
+    int control_result=simple_ui_control_key(GTK_WINDOW(win),key,mods);
     if(control_result>=0)return control_result;
-    GtkWidget *focus=gtk_window_get_focus(GTK_WINDOW(win));
-    if(focus&&(GTK_IS_EDITABLE(focus)||GTK_IS_TEXT(focus))){if(key==GDK_KEY_Escape){gtk_editable_set_text(GTK_EDITABLE(search),"");gtk_widget_set_visible(search,FALSE);if(current())gtk_widget_grab_focus(current()->row);else gtk_widget_grab_focus(list);return TRUE;}return FALSE;}
+    if(simple_ui_editing(GTK_WINDOW(win)))return FALSE;
     if(matches(key,mods,"navigation","down","j,Down"))move(1);
     else if(matches(key,mods,"navigation","up","k,Up"))move(-1);
     else if(key==GDK_KEY_g){gtk_list_box_unselect_all(GTK_LIST_BOX(list));move(1);}
@@ -220,13 +223,20 @@ static gboolean keypress(GtkEventControllerKey *c,guint key,guint code,GdkModifi
 }
 static gboolean closing(GtkWindow *w,gpointer d){closed=TRUE;return FALSE;}
 static void activated(GtkListBox *l,GtkListBoxRow *row,gpointer d){Row *r=g_object_get_data(G_OBJECT(row),"row");r->marked=!r->marked;row_mark(r);}
+static void search_action(SimpleUISearchAction action,gpointer unused){
+    (void)unused;
+    if(action==SIMPLE_UI_SEARCH_DOWN||action==SIMPLE_UI_SEARCH_UP)move(action==SIMPLE_UI_SEARCH_DOWN?1:-1);
+    else if(action==SIMPLE_UI_SEARCH_ACTIVATE){Row *r=current();if(r)activated(GTK_LIST_BOX(list),GTK_LIST_BOX_ROW(r->row),NULL);}
+}
 static void button(GtkWidget *box,const char *text,GCallback cb,gpointer arg){GtkWidget *b=gtk_button_new_with_label(text);gtk_box_append(GTK_BOX(box),b);g_signal_connect(b,"clicked",cb,arg);}
 static void activate(GtkApplication *app,gpointer data){
     if(win){gtk_window_present(GTK_WINDOW(win));return;}
     win=gtk_application_window_new(app);gtk_widget_add_css_class(win,"simpletorrent");gtk_window_set_title(GTK_WINDOW(win),"SimpleTorrent");gtk_window_set_default_size(GTK_WINDOW(win),900,530);
+    simple_ui_window(GTK_WINDOW(win));
     GtkCssProvider *p=gtk_css_provider_new();simple_theme_load(p,NULL);gtk_css_provider_load_from_string(p,
         "window.simpletorrent {background:@simple_bg;color:@simple_fg;} .simpletorrent label {color:@simple_fg;}"
         ".simpletorrent .heading {color:@simple_panel_accent;font-weight:bold;font-size:1.2em;} .simpletorrent .muted {color:mix(@simple_fg,@simple_muted,.35);font-size:.9em;}"
+        ".simpletorrent .transfer-summary {color:@simple_heading;font-weight:bold;background:@simple_surface;border:1px solid @simple_border;border-radius:8px;padding:10px 12px;}"
         ".simpletorrent button,.simpletorrent entry {background:@simple_button;color:@simple_fg;border:1px solid @simple_border;border-radius:8px;padding:7px;}"
         ".simpletorrent button:hover {background:@simple_hover;} .simpletorrent list {background:@simple_bg;} .simpletorrent row {padding:10px;border-bottom:1px solid @simple_border;}"
         ".simpletorrent row:nth-child(even) {background:@simple_surface;} .simpletorrent row:selected {background:@simple_accent;} .simpletorrent row:selected label {color:@simple_on_accent;}"
@@ -235,15 +245,18 @@ static void activate(GtkApplication *app,gpointer data){
     gtk_style_context_add_provider_for_display(gdk_display_get_default(),GTK_STYLE_PROVIDER(p),GTK_STYLE_PROVIDER_PRIORITY_USER);g_object_unref(p);
     char *css=g_build_filename(g_get_user_config_dir(),"simpletorrent","style.css",NULL);if(g_file_test(css,G_FILE_TEST_EXISTS)){p=gtk_css_provider_new();gtk_css_provider_load_from_path(p,css);gtk_style_context_add_provider_for_display(gdk_display_get_default(),GTK_STYLE_PROVIDER(p),GTK_STYLE_PROVIDER_PRIORITY_USER+1);g_object_unref(p);}g_free(css);
     GtkWidget *root=gtk_box_new(GTK_ORIENTATION_VERTICAL,12),*top=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,8);gtk_widget_set_margin_start(root,16);gtk_widget_set_margin_end(root,16);gtk_widget_set_margin_top(root,16);gtk_widget_set_margin_bottom(root,12);gtk_window_set_child(GTK_WINDOW(win),root);
-    GtkWidget *title=label("SimpleTorrent","heading");gtk_widget_set_hexpand(title,TRUE);gtk_box_append(GTK_BOX(top),title);
+    GtkWidget *title=label("Simpletorrent","title");gtk_widget_set_hexpand(title,TRUE);gtk_box_append(GTK_BOX(top),title);
     button(top,"+ Add · a",G_CALLBACK(add_dialog),NULL);button(top,"File…",G_CALLBACK(browse),NULL);button(top,"Start · s",G_CALLBACK(action),"torrent-start");button(top,"Pause · p",G_CALLBACK(action),"torrent-stop");button(top,"Delete · x",G_CALLBACK(action),"delete-files");gtk_box_append(GTK_BOX(root),top);
-    search=gtk_search_entry_new();gtk_widget_set_visible(search,FALSE);gtk_widget_set_tooltip_text(search,"Search torrents · /");gtk_box_append(GTK_BOX(root),search);g_signal_connect(search,"changed",G_CALLBACK(changed),NULL);
+    search=gtk_search_entry_new();gtk_widget_set_visible(search,TRUE);gtk_widget_set_tooltip_text(search,"Search torrents · /");gtk_box_append(GTK_BOX(root),search);g_signal_connect(search,"changed",G_CALLBACK(changed),NULL);
+    transfer_summary=label("All torrents    ↓ Download —    ↑ Upload —","transfer-summary");
+    gtk_widget_set_tooltip_text(transfer_summary,"Combined current transfer speeds across all torrents, including hidden search results. Updates every three seconds.");
+    gtk_box_append(GTK_BOX(root),transfer_summary);
     status_label=label("Connecting to Transmission…","muted");gtk_box_append(GTK_BOX(root),status_label);
     list=gtk_list_box_new();gtk_list_box_set_selection_mode(GTK_LIST_BOX(list),GTK_SELECTION_SINGLE);gtk_list_box_set_filter_func(GTK_LIST_BOX(list),filter,NULL,NULL);gtk_list_box_set_sort_func(GTK_LIST_BOX(list),newest_first,NULL,NULL);g_signal_connect(list,"row-activated",G_CALLBACK(activated),NULL);
     GtkWidget *scroll=gtk_scrolled_window_new();gtk_widget_set_vexpand(scroll,TRUE);gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),GTK_POLICY_NEVER,GTK_POLICY_AUTOMATIC);gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll),list);gtk_box_append(GTK_BOX(root),scroll);
     gtk_box_append(GTK_BOX(root),label("j/k move · Space mark · u unmark all · a add · s start · p pause · x delete files · X remove only · / search · q close","muted"));
     GtkEventController *controller=gtk_event_controller_key_new();gtk_event_controller_set_propagation_phase(controller,GTK_PHASE_CAPTURE);g_signal_connect(controller,"key-pressed",G_CALLBACK(keypress),NULL);gtk_widget_add_controller(win,controller);g_signal_connect(win,"close-request",G_CALLBACK(closing),NULL);
-    gtk_window_present(GTK_WINDOW(win));gtk_widget_grab_focus(list);request(get_request);g_timeout_add_seconds(3,poll,NULL);
+    simple_ui_bind_search(GTK_WINDOW(win),search,list,"simpletorrent",search_action,NULL);gtk_window_present(GTK_WINDOW(win));simple_ui_search_start(GTK_WINDOW(win),FALSE);request(get_request);g_timeout_add_seconds(3,poll,NULL);
 }
 int main(int argc,char **argv){
     if(argc>1&&!strcmp(argv[1],"--help")){g_print("SimpleTorrent — Transmission frontend\nConfiguration: ~/.config/simpletorrent/{config.ini,keys.ini,style.css}\n");return 0;}

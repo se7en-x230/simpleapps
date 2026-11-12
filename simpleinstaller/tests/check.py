@@ -13,6 +13,33 @@ installer=module('installer',BASE/'simpleinstaller')
 resolver=module('resolver',BASE/'runtime/simple-open.py')
 player=module('playerconfig',SOURCES/'simpleplayer/scripts/simpleplayer-config.py')
 class Tests(unittest.TestCase):
+ def test_framework_staging_and_portable_dependencies(self):
+  result=subprocess.run([str(BASE/'simpleinstaller'),'--dependencies','simplegarmin'],text=True,capture_output=True)
+  self.assertEqual(result.returncode,0,result.stderr)
+  self.assertIn('gtk4 >= 4.12',result.stdout)
+  with tempfile.TemporaryDirectory() as td:
+   stage=Path(td)/'stage';work=Path(td)/'work';stage.mkdir();work.mkdir()
+   owners=installer.stage_apps(SOURCES,['simplegarmin'],set(),stage,work)
+   library=stage/'.local/lib/simple-common/libsimple-ui.so'
+   self.assertTrue(library.is_file())
+   self.assertEqual(owners[library],{'simplegarmin'})
+   self.assertTrue((stage/'.local/share/simple-common/simple_ui.py').is_file())
+   dirs=installer.directories(Path(td)/'home')
+   self.assertEqual(installer.destination(Path('.local/include/simple-ui.h'),dirs),Path(td)/'home/.local/include/simple-ui.h')
+
+ def test_existing_picker_alias_is_preserved(self):
+  with tempfile.TemporaryDirectory() as td:
+   home=Path(td);dirs=installer.directories(home)
+   dirs['bin'].mkdir(parents=True)
+   (dirs['bin']/'simplepicker-native').write_text('native')
+   (dirs['bin']/'simplepicker').symlink_to('simplepicker-native')
+   stage=home/'stage';(stage/'.local/bin').mkdir(parents=True)
+   (stage/'.local/bin/simplepicker').write_text('launcher')
+   (stage/'.local/bin/simplepicker-native').write_text('new native')
+   files=installer.payload(stage,dirs,['simplepicker'],set(),'~/Music')
+   self.assertNotIn(dirs['bin']/'simplepicker',files)
+   self.assertIn(dirs['bin']/'simplepicker-native',files)
+
  def test_dependency_choices(self):
   plain=installer.packages(['simpleplayer'],set());visual=installer.packages(['simpleplayer'],{'visualizer'})
   self.assertIn('mpv',plain);self.assertNotIn('cava',plain);self.assertIn('cava',visual)

@@ -51,3 +51,30 @@ The editor is an argument list executed without a shell. Programs resolve throug
 The native file chooser uses Simplefiles where the desktop portal is configured, otherwise the desktop's chooser. Clipboard image copies reflect the decoded view, including rotation/mirroring; keep the viewer open until pasted. Detailed EXIF editing, conversion, wallpaper setting stay with existing external tools in this first version. Viewing does not modify originals; the explicit Trash action moves them to the desktop Trash.
 
 The installer supplies a menu entry, sources and uninstall receipt without changing desktop associations. Run check.py for file ordering/cache tests and check-gui.py in an isolated graphical session for decoding and UI tests.
+
+## Shared base and portable installation
+
+Uses the shared C/GTK4 base in `simple-common`. Python UI code calls the same native library through a thin adapter. Shared theme and keyboard adapters replace separate implementations; app-specific commands and content remain local.
+
+Requires Linux and Python 3.11+ for the source installer. Building the shared base requires a C compiler, make, pkg-config and GTK4 >= 4.12 development files. Install dependencies using your distribution’s package manager; package names can differ.
+
+- Libraries / pkg-config modules: `gtk4 >= 4.12`, `gdk-pixbuf-2.0`.
+- Python imports: `gi`, `cairo`.
+- Required commands: `python3`, `cc`, `make`, `pkg-config`.
+- Desktop requirements: GTK desktop; image formats supplied by installed GdkPixbuf loaders.
+
+From the suite checkout (no pacman or distro detection on this path):
+
+```sh
+./install --dependencies simpleimage
+./install --check simpleimage
+./install --no-packages --install simpleimage
+```
+
+To build a relocatable staging tree without changing your installation:
+
+```sh
+./install --install simpleimage --stage "$PWD/package-simpleimage"
+```
+
+Keep `simple-common` alongside the app sources. Staged files are under `.local/`; move that prefix as a unit so executables, shared libraries and resources stay together. Individual C Makefiles also accept `PREFIX`/`DESTDIR` where documented. See [portable builds](../docs/portability.md) for Debian/Arch dependency examples and limitations.

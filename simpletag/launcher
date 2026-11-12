@@ -1,0 +1,3 @@
+#!/bin/sh
+bindir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec python3 "$bindir/../share/simpletag/main.py" "$@"

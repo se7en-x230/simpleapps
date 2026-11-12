@@ -193,23 +193,26 @@ def gui(model, initial):
         def do_activate(self):
             if self.win: self.win.present(); return
             self.hold() # Keep alarms working when the window is closed.
-            self.win=Gtk.ApplicationWindow(application=self, title='Simpletimer')
-            self.win.set_default_size(460,280)
+            self.win=Gtk.ApplicationWindow(application=self, title='Simpletimer'); attach(self.win)
+            self.win.set_default_size(560,-1)
             self.win.connect('close-request',self.close)
             css=Gtk.CssProvider()
-            css.load_from_data(b'window {background:#272625;color:#d8ceb0;} .title {color:#d99a00;font-weight:bold;} .time {font-size:38px;} button {background:#35322e;color:#d8ceb0;} button.active,button:focus {background:#700909;} button:focus {outline:2px solid #d99a00;} entry {background:#35322e;color:#d8ceb0;}')
+            css.load_from_data(b'window.simple-app .timer-clock {font-size:38px;font-weight:bold;}')
             Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(),css,Gtk.STYLE_PROVIDER_PRIORITY_USER+1)
             box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=8)
-            for edge in ('top','bottom','start','end'): getattr(box,'set_margin_'+edge)(10)
+            box.add_css_class('root')
             self.win.set_child(box)
             header=Gtk.Box(spacing=8);box.append(header)
             title=Gtk.Label(label='Simpletimer',xalign=0,hexpand=True);title.add_css_class('title');header.append(title)
             quit_button=Gtk.Button(label='Quit [Q]');quit_button.connect('clicked',lambda _:self.close());header.append(quit_button)
-            tabs=Gtk.Box(spacing=5);box.append(tabs);self.tabs={}
+            tabs=Gtk.Box(spacing=5);tabs.add_css_class('simple-tabs');box.append(tabs);self.tabs={}
             for i,mode in enumerate(('countdown','stopwatch','pomodoro','fasting','meditation'),1):
-                b=Gtk.Button(label=f'{dict(countdown="Timer",stopwatch="Watch",pomodoro="Focus",fasting="Fast",meditation="Meditate")[mode]} [{i}]');b.connect('clicked',lambda _,m=mode:self.select(m));tabs.append(b);self.tabs[mode]=b
-            self.clock=Gtk.Label();self.clock.add_css_class('time');box.append(self.clock)
-            self.info=Gtk.Label();box.append(self.info)
+                b=Gtk.ToggleButton(label=f'{dict(countdown="Timer",stopwatch="Watch",pomodoro="Focus",fasting="Fast",meditation="Meditate")[mode]} [{i}]');b.set_hexpand(True)
+                if self.tabs:b.set_group(next(iter(self.tabs.values())))
+                b.connect('toggled',lambda button,m=mode:self.select(m) if button.get_active() and self.mode!=m else None);tabs.append(b);self.tabs[mode]=b
+            clock_card=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=8);clock_card.add_css_class('card');box.append(clock_card)
+            self.clock=Gtk.Label();self.clock.add_css_class('timer-clock');clock_card.append(self.clock)
+            self.info=Gtk.Label();self.info.add_css_class('muted');clock_card.append(self.info)
             self.time_label=Gtk.Label(label='Minutes · 0 = open end',xalign=0);box.append(self.time_label)
             self.entry=Gtk.Entry();self.entry.connect('activate',lambda _:self.apply());box.append(self.entry)
             self.mute=Gtk.CheckButton(label='Mute 10-minute bells [m]');self.mute.connect('toggled',self.mute_changed);box.append(self.mute)
@@ -220,14 +223,14 @@ def gui(model, initial):
                 if label.startswith('Finish'): self.finish_button=b
                 if label.startswith('Set'): self.apply_button=b
                 if label.startswith('Reset'): self.reset_button=b
-            hint=Gtk.Label(label='1–5 modes · h/j/k/l switch · Space start/pause\ni time · m mute bells · f finish · r reset · Esc/q hide · Q quit',wrap=True);box.append(hint)
+            hint=Gtk.Label(label='Ctrl+H/L tabs · 1–5 modes · h/j/k/l switch · Space start/pause\ni time · m mute bells · f finish · r reset · Esc/q hide · Q quit',wrap=True);box.append(hint)
             self.status=Gtk.Label(wrap=True);box.append(self.status)
             controller=Gtk.EventControllerKey();controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE);controller.connect('key-pressed',self.key);self.win.add_controller(controller)
             self.select(self.mode);GLib.timeout_add(250,self.tick);self.win.present()
 
         def close(self,*_):
             if getattr(self,'quit_dialog',None):self.quit_dialog.present();return True
-            dialog=Gtk.Window(title='Quit Simpletimer?',transient_for=self.win,modal=True)
+            dialog=Gtk.Window(application=self,title='Quit Simpletimer?',transient_for=self.win,modal=True);attach(dialog)
             self.quit_dialog=dialog;dialog.set_default_size(440,190)
             box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=12)
             for edge in ('top','bottom','start','end'):getattr(box,'set_margin_'+edge)(16)
@@ -260,7 +263,7 @@ def gui(model, initial):
         def select(self,mode):
             self.mode=mode
             for name,b in self.tabs.items():
-                (b.add_css_class if name==mode else b.remove_css_class)('active')
+                b.set_active(name==mode)
             self.entry.set_visible(mode in ('countdown','fasting','meditation'))
             self.apply_button.set_visible(mode in ('countdown','fasting','meditation'))
             self.reset_button.set_visible(mode!='fasting')
@@ -359,6 +362,8 @@ def gui(model, initial):
             return True
 
         def key(self,_,key,code,state):
+            if state & Gtk.accelerator_get_default_mod_mask()==Gdk.ModifierType.CONTROL_MASK and key in (Gdk.KEY_h,Gdk.KEY_l):
+                modes=list(self.tabs);self.select(modes[(modes.index(self.mode)+(1 if key==Gdk.KEY_l else -1))%len(modes)]);return True
             handled = control_key(self.win, key, state)
             if handled is not None:
                 if hasattr(self, 'prefix'): self.prefix = ''
@@ -393,6 +398,7 @@ for _keyboard_root in (_KeyboardPath(__file__).resolve().parent.parent / 'simple
         _keyboard_sys.path.insert(0, str(_keyboard_root))
         break
 from simple_keyboard import control_key
+from simple_ui import attach
 
 
 def main():

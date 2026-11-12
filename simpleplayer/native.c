@@ -105,21 +105,22 @@ static void play_selected(gboolean ordered_mode) {
     json_object_object_add(data,"order",json_object_new_string(ordered_mode?"ordered":"shuffle"));send(data);
 }
 static void choose_source(GtkButton *button,gpointer value) {
-    (void)button;guint next=GPOINTER_TO_UINT(value);if(next==source_index)return;
+    if(button&&!gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(button)))return;
+    guint next=GPOINTER_TO_UINT(value);if(next==source_index)return;
     g_free(source_folders[source_index]);source_folders[source_index]=g_strdup(folder?folder:"");
     g_free(source_queries[source_index]);source_queries[source_index]=g_strdup(gtk_editable_get_text(GTK_EDITABLE(search)));
     source_index=next;pending_play=FALSE;gtk_list_box_set_activate_on_single_click(GTK_LIST_BOX(list),next==0);
     GtkWidget *child;while((child=gtk_widget_get_first_child(list)))gtk_list_box_remove(GTK_LIST_BOX(list),child);
     g_free(folder);folder=g_strdup(source_folders[next]?source_folders[next]:"");
-    for(guint i=0;i<3;i++){if(i==next)gtk_widget_add_css_class(source_buttons[i],"primary");else gtk_widget_remove_css_class(source_buttons[i],"primary");}
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(source_buttons[next]),TRUE);
     gtk_widget_set_visible(shuffle,!next);gtk_widget_set_visible(ordered,!next);gtk_widget_set_visible(favourite_button,next!=0);gtk_widget_set_visible(stream_play,next!=0);
     const char *hints[]={"Search artists, albums…","Search stations or paste a stream URL…","Search YouTube or paste a link…"};
     g_object_set(search,"placeholder-text",hints[next],NULL);
     gtk_editable_set_text(GTK_EDITABLE(search),source_queries[next]?source_queries[next]:"");
-    gtk_widget_set_visible(search,FALSE);
+    gtk_widget_set_visible(search,TRUE);
     if(query_timer){g_source_remove(query_timer);query_timer=0;}
     gtk_label_set_text(GTK_LABEL(message),next?"Enter play · f favourite · / search":"Enter shuffle · Shift+Enter ordered · Ctrl+J/K selects");
-    g_clear_pointer(&rendered_query,g_free);browse();gtk_widget_grab_focus(list);
+    g_clear_pointer(&rendered_query,g_free);browse();simple_ui_search_start(GTK_WINDOW(window),FALSE);
 }
 static void favourite(GtkButton *button,gpointer unused) {
     (void)button;(void)unused;if(!source_index)return;
@@ -231,6 +232,13 @@ static void received(GObject *source,GAsyncResult *result,gpointer unused) {
     g_data_input_stream_read_line_async(reader,G_PRIORITY_DEFAULT,NULL,received,NULL);
 }
 static gboolean poll_status(gpointer unused) {(void)unused;send(request("status"));return G_SOURCE_CONTINUE;}
+static void search_action(SimpleUISearchAction action,gpointer unused) {
+    (void)unused;
+    if(action==SIMPLE_UI_SEARCH_DOWN||action==SIMPLE_UI_SEARCH_UP)move_selection(action==SIMPLE_UI_SEARCH_DOWN?1:-1,TRUE);
+    else if(action==SIMPLE_UI_SEARCH_ACTIVATE)play_selected(FALSE);
+    else if(action==SIMPLE_UI_SEARCH_NAVIGATE)show_library(TRUE);
+    else if(action==SIMPLE_UI_SEARCH_FOCUS)gtk_widget_set_visible(search,TRUE);
+}
 static gboolean keys(GtkEventControllerKey *controller,guint key,guint code,GdkModifierType state,gpointer unused) {
     (void)controller;(void)code;(void)unused;
 
@@ -243,8 +251,7 @@ static gboolean keys(GtkEventControllerKey *controller,guint key,guint code,GdkM
     if((state&(GDK_CONTROL_MASK|GDK_ALT_MASK|GDK_SUPER_MASK))==GDK_CONTROL_MASK&&(key==GDK_KEY_h||key==GDK_KEY_l)){choose_source(NULL,GUINT_TO_POINTER((source_index+(key==GDK_KEY_l?1:2))%3));return TRUE;}
     if((state&GDK_CONTROL_MASK)&&key==GDK_KEY_r){rescan(NULL,NULL);return TRUE;}
     if(key==GDK_KEY_Escape) {
-        if(gtk_widget_get_visible(search)){gtk_widget_set_visible(search,FALSE);gtk_editable_set_text(GTK_EDITABLE(search),"");gtk_widget_grab_focus(list);return TRUE;}
-        if(browsing)show_library(FALSE);else gtk_window_close(GTK_WINDOW(window));
+        gtk_window_close(GTK_WINDOW(window));
         return TRUE;
     }
     if(gtk_widget_get_visible(browser)) {
@@ -268,7 +275,7 @@ static gboolean keys(GtkEventControllerKey *controller,guint key,guint code,GdkM
     if(key==GDK_KEY_space){control(NULL,"pause");return TRUE;}
     if(key==GDK_KEY_n){control(NULL,"next");return TRUE;}
     if(key==GDK_KEY_p){control(NULL,"previous");return TRUE;}
-    if(key==GDK_KEY_q){gtk_window_close(GTK_WINDOW(window));return TRUE;}
+    if(key==GDK_KEY_q&&!(state&(GDK_CONTROL_MASK|GDK_ALT_MASK|GDK_SUPER_MASK))){gtk_window_close(GTK_WINDOW(window));return TRUE;}
     if(!gtk_widget_get_visible(browser))return FALSE;
     if(key==GDK_KEY_h||((state&GDK_ALT_MASK)&&key==GDK_KEY_Left)){back(NULL,NULL);return TRUE;}
     GtkListBoxRow *row=gtk_list_box_get_selected_row(GTK_LIST_BOX(list));
@@ -286,22 +293,23 @@ static gboolean keys(GtkEventControllerKey *controller,guint key,guint code,GdkM
 }
 static void activate(GtkApplication *app,gpointer unused) {
     (void)unused;if(window){gtk_window_present(GTK_WINDOW(window));return;}
-    window=gtk_application_window_new(app);gtk_window_set_title(GTK_WINDOW(window),"Simpleplayer");gtk_window_set_default_size(GTK_WINDOW(window),1280,730);
+    window=gtk_application_window_new(app);simple_ui_window(GTK_WINDOW(window));gtk_window_set_title(GTK_WINDOW(window),"Simpleplayer");gtk_window_set_default_size(GTK_WINDOW(window),1280,730);
     gtk_widget_add_css_class(window,"simpleplayer");
     GtkCssProvider *provider=gtk_css_provider_new();char *css=g_build_filename(assets,"app.css",NULL);simple_theme_load(provider,css);g_free(css);
     gtk_style_context_add_provider_for_display(gdk_display_get_default(),GTK_STYLE_PROVIDER(provider),GTK_STYLE_PROVIDER_PRIORITY_USER);g_object_unref(provider);
     GtkWidget *layout=gtk_box_new(GTK_ORIENTATION_VERTICAL,16);gtk_widget_add_css_class(layout,"player-layout");gtk_window_set_child(GTK_WINDOW(window),layout);
     GtkWidget *header=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,10),*titles=gtk_box_new(GTK_ORIENTATION_VERTICAL,3);
-    gtk_widget_set_hexpand(titles,TRUE);gtk_box_append(GTK_BOX(titles),label("YOUR MUSIC","eyebrow"));
-    heading=label("Simpleplayer","headline");gtk_box_append(GTK_BOX(titles),heading);gtk_box_append(GTK_BOX(header),titles);
+    gtk_widget_set_hexpand(titles,TRUE);
+    heading=label("Simpleplayer","title");gtk_box_append(GTK_BOX(titles),heading);gtk_box_append(GTK_BOX(header),titles);
     refresh=icon_button("view-refresh-symbolic","Refresh library · Ctrl+R",G_CALLBACK(rescan),NULL);gtk_box_append(GTK_BOX(header),refresh);gtk_box_append(GTK_BOX(layout),header);
     GtkWidget *body=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,24);browser=gtk_box_new(GTK_ORIENTATION_VERTICAL,12);
-    gtk_widget_set_size_request(browser,320,-1);gtk_widget_add_css_class(browser,"library-card");gtk_widget_set_valign(browser,GTK_ALIGN_FILL);
+    gtk_widget_set_size_request(browser,320,-1);gtk_widget_add_css_class(browser,"library-card");gtk_widget_add_css_class(browser,"card");gtk_widget_set_valign(browser,GTK_ALIGN_FILL);
     gtk_widget_set_hexpand(browser,FALSE);gtk_widget_set_vexpand(body,TRUE);
     gtk_box_append(GTK_BOX(layout),body);
     GtkWidget *sources=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,4);const char *source_labels[]={"Local","Radio","YouTube"};
-    for(guint i=0;i<3;i++){source_buttons[i]=gtk_button_new_with_label(source_labels[i]);gtk_widget_set_hexpand(source_buttons[i],TRUE);g_signal_connect(source_buttons[i],"clicked",G_CALLBACK(choose_source),GUINT_TO_POINTER(i));gtk_box_append(GTK_BOX(sources),source_buttons[i]);}
-    gtk_widget_add_css_class(source_buttons[0],"primary");gtk_box_append(GTK_BOX(browser),sources);
+    gtk_widget_add_css_class(sources,"simple-tabs");
+    for(guint i=0;i<3;i++){source_buttons[i]=gtk_toggle_button_new_with_label(source_labels[i]);if(i)gtk_toggle_button_set_group(GTK_TOGGLE_BUTTON(source_buttons[i]),GTK_TOGGLE_BUTTON(source_buttons[0]));gtk_widget_set_hexpand(source_buttons[i],TRUE);g_signal_connect(source_buttons[i],"toggled",G_CALLBACK(choose_source),GUINT_TO_POINTER(i));gtk_box_append(GTK_BOX(sources),source_buttons[i]);}
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(source_buttons[0]),TRUE);gtk_box_insert_child_after(GTK_BOX(layout),sources,header);
     search=gtk_search_entry_new();gtk_widget_set_visible(search,FALSE);g_object_set(search,"placeholder-text","Search artists, albums…",NULL);g_signal_connect(search,"changed",G_CALLBACK(searched),NULL);gtk_box_append(GTK_BOX(browser),search);
     GtkWidget *actions=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,8);
     shuffle=gtk_button_new_with_label("Shuffle");gtk_widget_add_css_class(shuffle,"primary");g_signal_connect(shuffle,"clicked",G_CALLBACK(play),"shuffle");
@@ -310,7 +318,7 @@ static void activate(GtkApplication *app,gpointer unused) {
     GtkWidget *scroll=gtk_scrolled_window_new();gtk_widget_set_vexpand(scroll,TRUE);gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),GTK_POLICY_NEVER,GTK_POLICY_AUTOMATIC);
     list=gtk_list_box_new();gtk_list_box_set_activate_on_single_click(GTK_LIST_BOX(list),TRUE);g_signal_connect(list,"row-activated",G_CALLBACK(activated),NULL);gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll),list);gtk_box_append(GTK_BOX(browser),scroll);
     message=label("Enter shuffle · Shift+Enter ordered · Ctrl+J/K selects","message");gtk_box_append(GTK_BOX(browser),message);
-    now=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,24);gtk_widget_add_css_class(now,"now-playing");
+    now=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,24);gtk_widget_add_css_class(now,"now-playing");gtk_widget_add_css_class(now,"card");
     gtk_widget_set_hexpand(now,TRUE);gtk_widget_set_valign(now,GTK_ALIGN_FILL);
     GtkWidget *details=gtk_box_new(GTK_ORIENTATION_VERTICAL,14);gtk_widget_set_hexpand(details,TRUE);gtk_widget_set_size_request(details,200,-1);gtk_widget_set_valign(details,GTK_ALIGN_FILL);gtk_widget_add_css_class(details,"track-details");
     GtkWidget *caption=label("NOW PLAYING","eyebrow");gtk_label_set_xalign(GTK_LABEL(caption),.5);gtk_box_append(GTK_BOX(details),caption);
@@ -335,17 +343,19 @@ static void activate(GtkApplication *app,gpointer unused) {
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(visualizer),cava_draw,NULL,NULL);gtk_box_append(GTK_BOX(layout),visualizer);
     if(g_strcmp0(g_getenv("SIMPLEPLAYER_VISUALIZER"),"0")) cava_start();
     else gtk_widget_set_visible(visualizer,FALSE);
-    gtk_box_append(GTK_BOX(layout),label("Ctrl+H/L source · 1/2/3 Local/Radio/YouTube · / search · Space pause · gg/G first/last · gh home","message"));
+    gtk_box_append(GTK_BOX(layout),label("Ctrl+H/L source · 1/2/3 Local/Radio/YouTube · Ctrl+R rescan/refresh · / search · Space pause · gg/G first/last · gh home","message"));
     GtkEventController *key=gtk_event_controller_key_new();gtk_event_controller_set_propagation_phase(key,GTK_PHASE_CAPTURE);g_signal_connect(key,"key-pressed",G_CALLBACK(keys),NULL);gtk_widget_add_controller(window,key);
     char *helper=g_build_filename(assets,"bridge.py",NULL);GError *error=NULL;
     bridge=g_subprocess_new(G_SUBPROCESS_FLAGS_STDIN_PIPE|G_SUBPROCESS_FLAGS_STDOUT_PIPE,&error,"python3",helper,NULL);g_free(helper);
     if(bridge) {
         reader=g_data_input_stream_new(g_subprocess_get_stdout_pipe(bridge));g_data_input_stream_read_line_async(reader,G_PRIORITY_DEFAULT,NULL,received,NULL);browse();poll_status(NULL);g_timeout_add_seconds(1,poll_status,NULL);
     } else {gtk_label_set_text(GTK_LABEL(message),error->message);g_clear_error(&error);}
-    gtk_window_present(GTK_WINDOW(window));gtk_widget_grab_focus(pause_button);
+    gtk_widget_set_visible(search,TRUE);
+    simple_ui_bind_search(GTK_WINDOW(window),search,list,"simpleplayer",search_action,NULL);
+    gtk_window_present(GTK_WINDOW(window));simple_ui_search_start(GTK_WINDOW(window),FALSE);
 }
 int main(int argc,char **argv) {
-    if(argc>1&&!strcmp(argv[1],"--help")){g_print("Simpleplayer — music library and mpv controls. / search, Ctrl+R refresh, Esc hides search.\n");return 0;}
+    if(argc>1&&!strcmp(argv[1],"--help")){g_print("Simpleplayer — music library and mpv controls. / search, Ctrl+R refresh, Ctrl+J/K selects, Ctrl+Enter navigation, Esc closes; h / Alt+Left goes back.\n");return 0;}
     const char *override=g_getenv("SIMPLEPLAYER_ASSETS");
     assets=override?g_strdup(override):g_build_filename(g_get_user_data_dir(),"simpleplayer",NULL);
     char *probe=g_build_filename(assets,"bridge.py",NULL);

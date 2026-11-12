@@ -9,10 +9,13 @@ CPPFLAGS += $(shell pkg-config --cflags $(PKGS))
 LDLIBS += $(shell pkg-config --libs $(PKGS))
 SOURCES = keys.c main.c util.c settings.c ui.c desktop.c providers.c power.c dashboard.c bridge.c vendor/toml.c
 OBJECTS = $(SOURCES:.c=.o)
-.PHONY: all clean install uninstall check
+.PHONY: all clean install uninstall check check-deps
 all: simplepicker-native
+check-deps:
+	@pkg-config --print-errors --exists "gtk4 >= 4.12" "gtk4-layer-shell-0 >= 1.0" gio-unix-2.0 json-c
+$(OBJECTS): | check-deps
 simplepicker-native: $(OBJECTS)
-	$(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS)
+	$(CC) $(LDFLAGS) $(filter %.o,$^) -o $@ $(LDLIBS)
 $(OBJECTS): sp.h
 %.o: %.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Wall -Wextra -Werror -Wno-missing-field-initializers -c $< -o $@
@@ -25,7 +28,7 @@ install: simplepicker-native
 	install -m755 simplepicker-native "$(DESTDIR)$(PREFIX)/bin/$(PROGRAM)"
 	install -m644 assets/*.json assets/*.txt assets/*LICENSE "$(DESTDIR)$(PREFIX)/share/simplepicker/"
 	install -m644 vendor/LICENSE.tomlc99 "$(DESTDIR)$(PREFIX)/share/simplepicker/"
-	install -m755 assets/edit-bookmarks assets/wtype "$(DESTDIR)$(PREFIX)/share/simplepicker/"
+	install -m755 assets/edit-bookmarks "$(DESTDIR)$(PREFIX)/share/simplepicker/"
 	install -d "$(DESTDIR)$(HELPERDIR)"
 	install -m755 idle "$(DESTDIR)$(HELPERDIR)/idle"
 	printf '%s\n' 'Installed $(PROGRAM). Existing config/history and shortcuts were not changed.'
@@ -34,10 +37,11 @@ uninstall:
 	@echo 'Resources and personal data are retained; remove resources manually if no longer used.'
 check: simplepicker-native
 	python3 tests/check.py
+	python3 tests/tool-search.py
 tests/driver: tests/driver.c $(filter-out main.o,$(OBJECTS))
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Wall -Wextra -Werror -Wno-missing-field-initializers $^ -o $@ $(LDLIBS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Wall -Wextra -Werror -Wno-missing-field-initializers $(filter %.c %.o,$^) -o $@ $(LDLIBS)
 tests/desktop-check: tests/desktop-check.c util.o settings.o desktop.o vendor/toml.o
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Wall -Wextra -Werror $^ -o $@ $(LDLIBS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Wall -Wextra -Werror $(filter %.c %.o,$^) -o $@ $(LDLIBS)
 
 dashboard.o: media.h
 
@@ -63,3 +67,7 @@ dashboard.o: ../simple-common/simple-images.h ../simple-common/daylight-art.h
 
 
 ui.o: ../simple-common/simple-keyboard.h
+
+SIMPLE_UI_TARGETS = simplepicker-native tests/driver tests/desktop-check
+include ../simple-common/framework.mk
+$(OBJECTS): ../simple-common/simple-ui.h

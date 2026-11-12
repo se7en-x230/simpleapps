@@ -1,5 +1,12 @@
 Native C/GTK frontend
 ---------------------
+World-clock reminders: `simple-calendar --remind-at 2026-11-10T14:00:00+07:00`
+opens an editable event draft at the given instant, converted to the calendar's
+local timezone, with a 15-minute duration and an At start notification. Nothing
+is saved until Add event / Ctrl+S. An existing editor is preserved. After saving
+and syncing, Android can notify through the same calendar account with calendar
+sync and notifications enabled; KDE Connect and shared Wi-Fi are not required.
+
 The window is compiled C/GTK4. Shared frontend source: ../simple-common/organizer.c, built separately by each app Makefile. Native executable: ~/.local/bin/simplecalendar-native. Python remains the provider/storage worker. Both frontends invoke ../simple-common/organizer-helper.py using JSON on stdin/stdout; adapters are bridge.py. Future Google sign-ins share google_oauth.py; existing tokens and caches retain their formats and locations. Calendar and Contacts keep separate permission grants.
 
 Newinit setup-runtime.py builds and installs the native binary locally. Sources and configuration sync; compiled binaries, account tokens and personal caches do not. Legacy ui.py is retained only as reference and is not launched.
@@ -41,3 +48,31 @@ The no-event image follows the shared daylight wallpaper portrait used by the id
 The no-event card uses the full current wallpaper with edge-to-edge cover scaling, cropping without distortion. Idle dashboard and lockscreen portrait framing stays unchanged.
 
 Optional report UI: `simple-calendar --show-90-day-report`. Hidden by default; existing events and reminders are preserved.
+
+## Shared base and portable installation
+
+Uses the shared C/GTK4 base in `simple-common`. Python UI code calls the same native library through a thin adapter. Shared theme and keyboard adapters replace separate implementations; app-specific commands and content remain local.
+
+Requires Linux and Python 3.11+ for the source installer. Building the shared base requires a C compiler, make, pkg-config and GTK4 >= 4.12 development files. Install dependencies using your distribution’s package manager; package names can differ.
+
+- Libraries / pkg-config modules: `gtk4 >= 4.12`, `json-c`.
+- Python imports: `icalendar`, `recurring_ical_events`, `requests`, `vdirsyncer`.
+- Required commands: `cc`, `make`, `pkg-config`, `python3`, `notify-send`.
+- Optional Google Calendar connection: `aiohttp_oauthlib`.
+- Desktop requirements: GTK desktop.
+
+From the suite checkout (no pacman or distro detection on this path):
+
+```sh
+./install --dependencies simplecalendar
+./install --check simplecalendar
+./install --no-packages --install simplecalendar
+```
+
+To build a relocatable staging tree without changing your installation:
+
+```sh
+./install --install simplecalendar --stage "$PWD/package-simplecalendar"
+```
+
+Keep `simple-common` alongside the app sources. Staged files are under `.local/`; move that prefix as a unit so executables, shared libraries and resources stay together. Individual C Makefiles also accept `PREFIX`/`DESTDIR` where documented. See [portable builds](../docs/portability.md) for Debian/Arch dependency examples and limitations.

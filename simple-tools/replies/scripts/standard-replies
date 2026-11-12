@@ -114,10 +114,12 @@ def matches(query, labels, hotkeys):
 
 
 def choose_reply(root, show_menu):
+    keys = Path(os.environ.get('XDG_CONFIG_HOME', Path.home()/'.config'))/'simplepicker/replies/keys.ini'
+    if not keys.is_file(): keys = Path(__file__).resolve().parents[1]/'keys.ini'
     while True:
         language = show_menu(lambda q: matches(q, LANGUAGES, {'e': 'en', 'd': 'de', 'en': 'en', 'de': 'de'}),
-                             labels=LANGUAGES, title='Standard replies', prompt='Language · e English · d Deutsch',
-                             width=460, height=240, auto_accept=True, default_icon='mail-reply-sender-symbolic')
+                             labels=LANGUAGES, title='Standard replies', prompt='Language · / Search · Enter choose',
+                             width=460, height=240, auto_accept=False, keys=keys, key_scope='replies', default_icon='mail-reply-sender-symbolic')
         if language is None: return None
         if language not in LANGUAGES: raise ValueError('Unknown reply language.')
         entries = discover(root)[language]
@@ -127,8 +129,8 @@ def choose_reply(root, show_menu):
         images = [name for name in entries if Path(name).suffix.lower() in IMAGE_TYPES]
         reply = show_menu(lambda q: matches(q, labels, hotkeys),
                           labels=labels, title='Standard replies · '+language.upper(),
-                          prompt='Search · d/f/1/2 replies · s schedule · Enter pastes',
-                          width=880, height=460, auto_accept=True, default_icon='mail-reply-sender-symbolic',
+                          prompt='/ Search · Esc navigation · Enter pastes',
+                          width=880, height=460, auto_accept=False, keys=keys, key_scope='replies', default_icon='mail-reply-sender-symbolic',
                           text_preview=lambda item: reply_text(root, item),
                           image_preview=lambda item: reply_image(root, item, preview=True), preview_rows=images,
                           subtitles={name: name for name in entries},

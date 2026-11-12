@@ -95,6 +95,7 @@ for _keyboard_root in (_KeyboardPath(__file__).resolve().parent.parent / 'simple
         _keyboard_sys.path.insert(0, str(_keyboard_root))
         break
 from simple_keyboard import control_key, dialog_keys
+from simple_ui import attach, bind_search, start_search
 
 
 def main(argv=None):
@@ -131,7 +132,7 @@ def main(argv=None):
             self.connect('activate', self.activate)
 
         def activate(self, *_):
-            self.win = Gtk.ApplicationWindow(application=self, title='Simplefiles')
+            self.win = Gtk.ApplicationWindow(application=self, title='Simplefiles'); attach(self.win)
             self.win.set_default_size(1000, 700)
             self.win.add_css_class('simplefiles')
             root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -191,17 +192,7 @@ def main(argv=None):
             self.status = Gtk.Label(xalign=0); root.append(self.status)
             guide = Gtk.Label(label='h/j/k/l navigate · Space select · gg/G top/bottom · / filter · . hidden · g… folders · Ctrl+l path · Ctrl+Enter confirm · Esc cancel · Tab controls · ? keys', wrap=True, xalign=0)
             guide.add_css_class('dim-label'); root.append(guide)
-            fallback = Gtk.CssProvider()
-            fallback.load_from_string('@define-color simple_bg #2a2a2a; @define-color simple_fg #e4ded2; @define-color simple_muted #928374; @define-color simple_heading #f3a40a; @define-color simple_button #3b3b3b; @define-color simple_hover #454545; @define-color simple_border #49454a; @define-color simple_accent #8B0000; @define-color simple_on_accent #fff5ef;')
             display = Gdk.Display.get_default()
-            Gtk.StyleContext.add_provider_for_display(display, fallback, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-            config = Path(os.environ.get('XDG_CONFIG_HOME', Path.home()/'.config'))/'simple'
-            data = Path(os.environ.get('XDG_DATA_HOME', Path.home()/'.local/share'))/'simple'
-            for path in (config/'aliases.css', config/'theme.css', data/'aliases.css', data/'theme.css'):
-                if path.is_file():
-                    provider = Gtk.CssProvider(); provider.load_from_path(str(path))
-                    Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION+1)
-                    break
             css = Gtk.CssProvider()
             css.load_from_string('window.simplefiles { background: @simple_bg; color: @simple_fg; } .simplefiles .title { color: @simple_heading; font-weight: bold; font-size: 18px; } .simplefiles listview { background: transparent; color: @simple_fg; } .simplefiles row { padding: 7px; } .simplefiles row:selected { background: @simple_accent; color: @simple_on_accent; } .simplefiles entry, .simplefiles textview text { background: @simple_button; color: @simple_fg; } .simplefiles button { background: @simple_button; color: @simple_fg; border: 1px solid @simple_border; border-radius: 9px; box-shadow: none; } .simplefiles button:hover { background: @simple_hover; } .simplefiles .dim-label { color: @simple_muted; opacity: 1; }')
             Gtk.StyleContext.add_provider_for_display(display, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION+2)
@@ -211,7 +202,13 @@ def main(argv=None):
             Gtk.StyleContext.add_provider_for_display(display, selection_css, Gtk.STYLE_PROVIDER_PRIORITY_USER+1)
             keys = Gtk.EventControllerKey(); keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
             keys.connect('key-pressed', self.key); self.win.add_controller(keys)
+            bind_search(self.win,self.search,self.list,'simplefiles',self.move,self.activate_result)
             self.win.present(); self.navigate(self.cwd, Path(args.path).expanduser().absolute())
+            if not args.save: start_search(self.win)
+
+        def activate_result(self):
+            if not args.directory and not args.save and self.hovered() and self.hovered().is_dir(): self.enter()
+            else: self.confirm()
 
         def location_enter(self, *_):
             p = Path(self.location.get_text()).expanduser()

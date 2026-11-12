@@ -1,0 +1,6 @@
+# Picard owns tagging, artwork, renaming and destination-folder settings.
+width = 1000
+height = 680
+start_folder = "~/Music"
+# Closing clears Picard’s work list without saving; audio files are retained.
+clear_on_close = true

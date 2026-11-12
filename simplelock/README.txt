@@ -78,3 +78,32 @@ Requires mpv, pactl, and Python GObject; failures leave the UI/lock functional.
 Artwork sizing: the cover image is an unmeasured overlay inside its square
 frame. Portrait/landscape image dimensions cannot enlarge the layout and
 force LockFit to shrink all text. Images retain their original aspect ratio.
+
+## Shared base and portable installation
+
+Uses the shared C/GTK4 base in `simple-common`. Python UI code calls the same native library through a thin adapter. Shared theme and keyboard adapters replace separate implementations; app-specific commands and content remain local.
+
+Requires Linux and Python 3.11+ for the source installer. Building the shared base requires a C compiler, make, pkg-config and GTK4 >= 4.12 development files. Install dependencies using your distribution’s package manager; package names can differ.
+
+- Libraries / pkg-config modules: `gtk4 >= 4.12`, `json-c`, `gtk4-layer-shell-0 >= 1.2`, `gio-unix-2.0`, `pam`.
+- Python imports: none beyond the standard library for the base app.
+- Required commands: `cc`, `make`, `pkg-config`.
+- Optional Lock-screen audio visualization: `cava`.
+- Desktop requirements: Wayland ext-session-lock-v1 and layer-shell; not X11 or KDE Plasma lock replacement..
+- Requires gtk4-layer-shell >= 1.2 and a compatible session-lock compositor. Debian 13’s stock layer-shell package is too old; do not treat this as a universally supported screen locker. PAM setup remains distribution-specific.
+
+From the suite checkout (no pacman or distro detection on this path):
+
+```sh
+./install --dependencies simplelock
+./install --check simplelock
+./install --no-packages --install simplelock
+```
+
+To build a relocatable staging tree without changing your installation:
+
+```sh
+./install --install simplelock --stage "$PWD/package-simplelock"
+```
+
+Keep `simple-common` alongside the app sources. Staged files are under `.local/`; move that prefix as a unit so executables, shared libraries and resources stay together. Individual C Makefiles also accept `PREFIX`/`DESTDIR` where documented. See [portable builds](../docs/portability.md) for Debian/Arch dependency examples and limitations.

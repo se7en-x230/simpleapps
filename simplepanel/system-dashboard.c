@@ -1,7 +1,6 @@
 #define _GNU_SOURCE
 #include "../simple-common/simple-paths.h"
 #include "simple-theme.h"
-#include "phone-charge-cache.h"
 #include <gtk/gtk.h>
 #include <gtk4-layer-shell.h>
 #include <pulse/pulseaudio.h>
@@ -23,10 +22,14 @@
 static GtkApplication *application;
 static GtkWidget *popup,*clocks[SIMPLE_MAX_CARDS],*cpu,*memory,*disk,*network,*volume,*bluetooth,*battery,*uptime,*phone_label,*market_prices[SIMPLE_MAX_CARDS],*market_trends[SIMPLE_MAX_CARDS];
 static GtkWidget *control_cards[9];
+static GtkWidget *converter_box,*convert_date,*convert_time,*convert_source,*convert_zone,*convert_result;
+static GtkWidget *convert_result_box,*convert_detail;
+static GtkWidget *converter_controls[6],*convert_reminder;
+static gboolean converter_key(GtkWidget *focused,guint keyval);
+static guint convert_flash;
+static GPtrArray *convert_zones;
 static GDBusConnection *bus;
 static gboolean phone_busy;
-static PhoneChargeEstimate phone_estimate;
-static char *phone_device;
 static GTimeZone *timezones[SIMPLE_MAX_CARDS];
 static GCancellable *cancel;
 static pa_glib_mainloop *pulse_loop;
@@ -100,7 +103,7 @@ static void graph_draw(GtkDrawingArea *area,cairo_t *cr,int width,int height,gpo
     }
 }
 static void graph_add(GtkWidget *box,Graph *graph,const char *caption) {
-    graph->area=gtk_drawing_area_new();gtk_widget_set_size_request(graph->area,-1,graph->bar?10:38);
+    graph->area=gtk_drawing_area_new();gtk_widget_set_size_request(graph->area,-1,graph->bar?8:24);
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(graph->area),graph_draw,graph,NULL);
     gtk_widget_set_hexpand(graph->area,TRUE);gtk_box_append(GTK_BOX(box),graph->area);
     graph->caption=gtk_label_new(caption);gtk_label_set_xalign(GTK_LABEL(graph->caption),0);
@@ -110,6 +113,11 @@ static void graph_add(GtkWidget *box,Graph *graph,const char *caption) {
 static gboolean quit_dashboard(gpointer data) {g_application_quit(G_APPLICATION(application));return G_SOURCE_REMOVE;}
 static gboolean key(GtkEventControllerKey *controller,guint keyval,guint code,GdkModifierType state,gpointer data) {
     if(state&(GDK_CONTROL_MASK|GDK_ALT_MASK|GDK_SUPER_MASK))return FALSE;
+    GtkWidget *focused=gtk_window_get_focus(GTK_WINDOW(popup));
+    if(focused&&gtk_widget_get_ancestor(focused,GTK_TYPE_POPOVER))return FALSE;
+    if(converter_box&&focused&&gtk_widget_is_ancestor(focused,converter_box)) {
+        return converter_key(focused,keyval);
+    }
     if(keyval==GDK_KEY_Escape||keyval==GDK_KEY_q){quit_dashboard(NULL);return TRUE;}
     int dx=0,dy=0;
     switch(keyval) {
@@ -121,6 +129,10 @@ static gboolean key(GtkEventControllerKey *controller,guint keyval,guint code,Gd
     }
     GtkWidget *focus=gtk_window_get_focus(GTK_WINDOW(popup));int current=-1;
     for(int i=0;i<9;i++)if(control_cards[i]&&focus==control_cards[i])current=i;
+    if(dy<0&&current>=0&&current<3) {
+        gtk_widget_grab_focus(convert_source);
+        gtk_window_set_focus_visible(GTK_WINDOW(popup),TRUE);return TRUE;
+    }
     if(keyval==GDK_KEY_Return||keyval==GDK_KEY_KP_Enter||keyval==GDK_KEY_space) {
         if(current<0)return FALSE;
         g_signal_emit_by_name(control_cards[current],"clicked");return TRUE;
@@ -130,7 +142,7 @@ static gboolean key(GtkEventControllerKey *controller,guint keyval,guint code,Gd
     if(current<0)next=3;
     else for(int i=0;i<9;i++) {
         if(!control_cards[i]||i==current)continue;
-        const int xs[]={0,2,4,0,3,3},ys[]={0,0,0,1,1,2};
+        const int xs[]={0,1,2,0,1,2},ys[]={0,0,0,1,1,1};
         int x=xs[i]-xs[current],y=ys[i]-ys[current];
         if((dx&&(x*dx<=0||y!=0))||(dy&&y*dy<=0))continue;
         int score=dy?abs(y)*10+abs(x):abs(x);
@@ -145,6 +157,247 @@ static GtkWidget *text(const char *value,const char *style) {
     gtk_widget_add_css_class(w,style);return w;
 }
 static void set(GtkWidget *w,const char *value) {gtk_label_set_text(GTK_LABEL(w),value);}
+/* Reject invalid dates and daylight-saving gaps rather than silently shifting them. */
+static GDateTime *converter_local_time(const char *date,const char *time,GTimeZone *zone) {
+    int year,month,day,hour,minute,n=0;
+    if(strlen(date)!=10||strlen(time)!=5||date[4]!='-'||date[7]!='-'||time[2]!=':')return NULL;
+    for(int i=0;i<10;i++)if(i!=4&&i!=7&&!g_ascii_isdigit(date[i]))return NULL;
+    for(int i=0;i<5;i++)if(i!=2&&!g_ascii_isdigit(time[i]))return NULL;
+    if(sscanf(date,"%4d-%2d-%2d%n",&year,&month,&day,&n)!=3||n!=10||
+       sscanf(time,"%2d:%2d%n",&hour,&minute,&n)!=2||n!=5)return NULL;
+    GDateTime *value=g_date_time_new(zone,year,month,day,hour,minute,0);
+    if(value&&(g_date_time_get_year(value)!=year||g_date_time_get_month(value)!=month||
+       g_date_time_get_day_of_month(value)!=day||g_date_time_get_hour(value)!=hour||
+       g_date_time_get_minute(value)!=minute)){g_date_time_unref(value);return NULL;}
+    return value;
+}
+static gboolean converter_unflash(gpointer data) {
+    gtk_widget_remove_css_class(convert_result_box,"result-changed");convert_flash=0;return G_SOURCE_REMOVE;
+}
+static void converter_update(void) {
+    set(convert_detail,"");
+    if(convert_reminder)gtk_widget_set_sensitive(convert_reminder,FALSE);
+    guint source=gtk_drop_down_get_selected(GTK_DROP_DOWN(convert_source));
+    if(source>=convert_zones->len){set(convert_result,"Choose a source timezone.");return;}
+    GTimeZone *local_zone=g_time_zone_new_identifier(g_ptr_array_index(convert_zones,source));
+    GDateTime *local=converter_local_time(gtk_editable_get_text(GTK_EDITABLE(convert_date)),
+        gtk_editable_get_text(GTK_EDITABLE(convert_time)),local_zone);
+    g_time_zone_unref(local_zone);
+    guint selected=gtk_drop_down_get_selected(GTK_DROP_DOWN(convert_zone));
+    if(!local){set(convert_result,"Enter a valid source date (YYYY-MM-DD) and time (HH:MM).");return;}
+    if(selected>=convert_zones->len){set(convert_result,"Choose a destination.");g_date_time_unref(local);return;}
+    GTimeZone *target=g_time_zone_new_identifier(g_ptr_array_index(convert_zones,selected));
+    if(!target){set(convert_result,"Destination timezone unavailable.");g_date_time_unref(local);return;}
+    GDateTime *converted=g_date_time_to_timezone(local,target);
+    if(convert_reminder)gtk_widget_set_sensitive(convert_reminder,g_date_time_to_unix(local)>g_get_real_time()/G_USEC_PER_SEC);
+    const char *source_id=g_ptr_array_index(convert_zones,source),*target_id=g_ptr_array_index(convert_zones,selected);
+    const char *from=!strcmp(source_id,"Asia/Bangkok")?"Thailand":strrchr(source_id,'/')?strrchr(source_id,'/')+1:source_id;
+    const char *to=!strcmp(target_id,"Asia/Bangkok")?"Thailand":strrchr(target_id,'/')?strrchr(target_id,'/')+1:target_id;
+    char *source_time=g_date_time_format(local,"%H:%M"),*target_time=g_date_time_format(converted,"%H:%M");
+    char *equation=g_strdup_printf("%s %s  →  %s %s",source_time,from,target_time,to);
+    for(char *p=equation;*p;p++)if(*p=='_')*p=' ';
+    gboolean changed=g_strcmp0(gtk_label_get_text(GTK_LABEL(convert_result)),equation)!=0;
+    set(convert_result,equation);
+    char *date=g_date_time_format(converted,"%a %d %b %Y · %Z (UTC%:z)");
+    char *source_date=g_date_time_format(local,"%Y-%m-%d"),*target_date=g_date_time_format(converted,"%Y-%m-%d");
+    const char *day=strcmp(source_date,target_date)==0?"Same day":strcmp(source_date,target_date)<0?"Next day":"Previous day";
+    char *detail=g_strdup_printf("%s · %s",day,date);set(convert_detail,detail);
+    if(changed) {
+        if(convert_flash)g_source_remove(convert_flash);
+        gtk_widget_add_css_class(convert_result_box,"result-changed");
+        convert_flash=g_timeout_add(900,converter_unflash,NULL);
+    }
+    g_free(source_time);g_free(target_time);g_free(equation);g_free(date);g_free(source_date);g_free(target_date);g_free(detail);
+    g_date_time_unref(converted);g_time_zone_unref(target);g_date_time_unref(local);
+}
+static void converter_changed(GtkEditable *editable,gpointer data) {converter_update();}
+static void converter_selected(GObject *object,GParamSpec *spec,gpointer data) {converter_update();}
+static void converter_now(GtkButton *button,gpointer data) {
+    guint source=gtk_drop_down_get_selected(GTK_DROP_DOWN(convert_source));
+    if(source>=convert_zones->len)return;
+    GTimeZone *zone=g_time_zone_new_identifier(g_ptr_array_index(convert_zones,source));
+    GDateTime *now=g_date_time_new_now(zone);g_time_zone_unref(zone);
+    char *date=g_date_time_format(now,"%Y-%m-%d"),*time=g_date_time_format(now,"%H:%M");
+    gtk_editable_set_text(GTK_EDITABLE(convert_date),date);gtk_editable_set_text(GTK_EDITABLE(convert_time),time);
+    g_free(date);g_free(time);g_date_time_unref(now);converter_update();
+}
+static void converter_swap(GtkButton *button,gpointer data) {
+    guint from=gtk_drop_down_get_selected(GTK_DROP_DOWN(convert_source));
+    guint to=gtk_drop_down_get_selected(GTK_DROP_DOWN(convert_zone));
+    if(from>=convert_zones->len||to>=convert_zones->len)return;
+    GTimeZone *source=g_time_zone_new_identifier(g_ptr_array_index(convert_zones,from));
+    GTimeZone *target=g_time_zone_new_identifier(g_ptr_array_index(convert_zones,to));
+    GDateTime *value=converter_local_time(gtk_editable_get_text(GTK_EDITABLE(convert_date)),gtk_editable_get_text(GTK_EDITABLE(convert_time)),source);
+    GDateTime *converted=value?g_date_time_to_timezone(value,target):NULL;
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(convert_source),to);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(convert_zone),from);
+    if(converted) {
+        char *date=g_date_time_format(converted,"%Y-%m-%d"),*time=g_date_time_format(converted,"%H:%M");
+        gtk_editable_set_text(GTK_EDITABLE(convert_date),date);gtk_editable_set_text(GTK_EDITABLE(convert_time),time);
+        g_free(date);g_free(time);g_date_time_unref(converted);
+    }
+    if(value)g_date_time_unref(value);
+    g_time_zone_unref(source);g_time_zone_unref(target);converter_update();
+}
+static void zone_label_setup(GtkSignalListItemFactory *factory,GObject *item,gpointer data) {
+    GtkWidget *label=gtk_label_new(NULL);gtk_label_set_xalign(GTK_LABEL(label),0);
+    gtk_label_set_ellipsize(GTK_LABEL(label),PANGO_ELLIPSIZE_END);gtk_label_set_max_width_chars(GTK_LABEL(label),22);
+    gtk_list_item_set_child(GTK_LIST_ITEM(item),label);
+}
+static void zone_label_bind(GtkSignalListItemFactory *factory,GObject *item,gpointer data) {
+    const char *name=gtk_string_object_get_string(GTK_STRING_OBJECT(gtk_list_item_get_item(GTK_LIST_ITEM(item))));
+    gtk_label_set_text(GTK_LABEL(gtk_list_item_get_child(GTK_LIST_ITEM(item))),name);
+}
+static void converter_add_zone(GtkStringList *names,const char *zone,const char *city) {
+    for(guint i=0;i<convert_zones->len;i++)if(!strcmp(g_ptr_array_index(convert_zones,i),zone))return;
+    GTimeZone *valid=g_time_zone_new_identifier(zone);if(!valid)return;g_time_zone_unref(valid);
+    g_ptr_array_add(convert_zones,g_strdup(zone));
+    char *name=city?g_strdup(city):g_strdup(zone);
+    for(char *p=name;*p;p++)if(*p=='_')*p=' ';
+    gtk_string_list_append(names,name);g_free(name);
+}
+static gboolean converter_adjust(gboolean date,int direction) {
+    int position=gtk_editable_get_position(GTK_EDITABLE(convert_time));
+    GTimeZone *utc=g_time_zone_new_utc();
+    GDateTime *before=converter_local_time(gtk_editable_get_text(GTK_EDITABLE(convert_date)),
+        date?"12:00":gtk_editable_get_text(GTK_EDITABLE(convert_time)),utc);
+    g_time_zone_unref(utc);if(!before)return FALSE;
+    GDateTime *after=date?g_date_time_add_days(before,direction):
+        position<3?g_date_time_add_hours(before,direction):g_date_time_add_minutes(before,direction);
+    if(after) {
+        char *day=g_date_time_format(after,"%Y-%m-%d"),*time=g_date_time_format(after,"%H:%M");
+        gtk_editable_set_text(GTK_EDITABLE(convert_date),day);
+        if(!date) {
+            gtk_editable_set_text(GTK_EDITABLE(convert_time),time);
+            gtk_editable_set_position(GTK_EDITABLE(convert_time),position<3?0:3);
+        } else gtk_editable_set_position(GTK_EDITABLE(convert_date),8);
+        g_free(day);g_free(time);g_date_time_unref(after);
+    }
+    g_date_time_unref(before);return TRUE;
+}
+static gboolean converter_key(GtkWidget *focused,guint keyval) {
+    int current=-1;
+    for(int i=0;i<6;i++)if(converter_controls[i]&&(focused==converter_controls[i]||gtk_widget_is_ancestor(focused,converter_controls[i])))current=i;
+    if(keyval==GDK_KEY_Escape) {
+        if(control_cards[0])gtk_widget_grab_focus(control_cards[0]);
+        return TRUE;
+    }
+    if(current<0)return FALSE;
+    int direction=(keyval==GDK_KEY_k||keyval==GDK_KEY_Up||keyval==GDK_KEY_plus||keyval==GDK_KEY_KP_Add)?1:
+        (keyval==GDK_KEY_j||keyval==GDK_KEY_Down||keyval==GDK_KEY_minus||keyval==GDK_KEY_KP_Subtract)?-1:0;
+    if(direction&&(current==1||current==2))return converter_adjust(current==1,direction);
+    if(keyval==GDK_KEY_h||keyval==GDK_KEY_l) {
+        gboolean right=keyval==GDK_KEY_l;
+        if(current==2) {
+            int position=gtk_editable_get_position(GTK_EDITABLE(convert_time));
+            if((right&&position<3)||(!right&&position>=3)) {
+                gtk_editable_set_position(GTK_EDITABLE(convert_time),right?3:0);return TRUE;
+            }
+        }
+        int next=CLAMP(current+(right?1:-1),0,5);
+        gtk_widget_grab_focus(converter_controls[next]);
+        if(next==2)gtk_editable_set_position(GTK_EDITABLE(convert_time),right?0:3);
+        if(next==1)gtk_editable_set_position(GTK_EDITABLE(convert_date),8);
+        return TRUE;
+    }
+    if(direction) {
+        if(current==0||current==4) {
+            GtkDropDown *dropdown=GTK_DROP_DOWN(converter_controls[current]);
+            int selected=(int)gtk_drop_down_get_selected(dropdown);
+            gtk_drop_down_set_selected(dropdown,CLAMP(selected-direction,0,(int)convert_zones->len-1));
+        } else if(control_cards[0])gtk_widget_grab_focus(control_cards[0]);
+        return TRUE;
+    }
+    if(keyval==GDK_KEY_Return||keyval==GDK_KEY_KP_Enter) {
+        if(current==1||current==2){gtk_widget_grab_focus(converter_controls[current+1]);return TRUE;}
+        if(current==0||current==4){gtk_widget_activate(converter_controls[current]);return TRUE;}
+    }
+    return FALSE;
+}
+static void converter_remind(GtkButton *button,gpointer data) {
+    guint source=gtk_drop_down_get_selected(GTK_DROP_DOWN(convert_source));if(source>=convert_zones->len)return;
+    GTimeZone *zone=g_time_zone_new_identifier(g_ptr_array_index(convert_zones,source));
+    GDateTime *time=converter_local_time(gtk_editable_get_text(GTK_EDITABLE(convert_date)),gtk_editable_get_text(GTK_EDITABLE(convert_time)),zone);
+    g_time_zone_unref(zone);if(!time)return;
+    if(g_date_time_to_unix(time)<=g_get_real_time()/G_USEC_PER_SEC){set(convert_detail,"Choose a future date and time for a reminder.");g_date_time_unref(time);return;}
+    char *stamp=g_date_time_format_iso8601(time),*launcher=g_build_filename(g_get_home_dir(),".local/bin/simple-calendar",NULL);
+    char *argv[]={launcher,"--remind-at",stamp,NULL};GError *error=NULL;
+    if(!g_spawn_async(NULL,argv,NULL,G_SPAWN_DEFAULT,NULL,NULL,NULL,&error)){set(convert_detail,error->message);g_clear_error(&error);}
+    g_free(launcher);g_free(stamp);g_date_time_unref(time);
+}
+static void converter_field_left(GtkEventControllerFocus *controller,gpointer entry) {
+    GtkEditable *editable=GTK_EDITABLE(entry);
+    gtk_editable_set_position(editable,gtk_editable_get_position(editable));
+}
+static GtkWidget *time_converter(void) {
+    g_object_set(gtk_settings_get_default(),"gtk-entry-select-on-focus",FALSE,NULL);
+    converter_box=gtk_box_new(GTK_ORIENTATION_VERTICAL,6);gtk_widget_add_css_class(converter_box,"dash-system");
+    gtk_box_append(GTK_BOX(converter_box),text("TIME CONVERTER","dash-card-title"));
+    GtkWidget *row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,8);
+    convert_date=gtk_entry_new();gtk_entry_set_placeholder_text(GTK_ENTRY(convert_date),"YYYY-MM-DD");
+    gtk_editable_set_max_width_chars(GTK_EDITABLE(convert_date),10);gtk_editable_set_width_chars(GTK_EDITABLE(convert_date),10);gtk_entry_set_max_length(GTK_ENTRY(convert_date),10);
+    gtk_widget_set_tooltip_text(convert_date,"Date · j/k or −/+ changes one day");
+    convert_time=gtk_entry_new();gtk_entry_set_placeholder_text(GTK_ENTRY(convert_time),"HH:MM");
+    gtk_editable_set_max_width_chars(GTK_EDITABLE(convert_time),5);gtk_editable_set_width_chars(GTK_EDITABLE(convert_time),5);gtk_entry_set_max_length(GTK_ENTRY(convert_time),5);
+    gtk_widget_set_tooltip_text(convert_time,"Time · h/l selects hour/minute · j/k or −/+ adjusts");
+    GtkWidget *fields[]={convert_date,convert_time};
+    for(int i=0;i<2;i++) {
+        GtkEventController *focus=gtk_event_controller_focus_new();
+        g_signal_connect(focus,"leave",G_CALLBACK(converter_field_left),fields[i]);
+        gtk_widget_add_controller(fields[i],focus);
+    }
+    GtkStringList *names=gtk_string_list_new(NULL);convert_zones=g_ptr_array_new_with_free_func(g_free);
+    converter_add_zone(names,"Asia/Bangkok","Thailand · Bangkok");
+    converter_add_zone(names,"Europe/Berlin","Germany · Berlin");
+    for(gsize i=0;i<dashboard_settings.clocks;i++)converter_add_zone(names,dashboard_settings.zones[i],dashboard_settings.cities[i]);
+    converter_add_zone(names,"UTC",NULL);
+    char *raw=NULL;
+    if(g_file_get_contents("/usr/share/zoneinfo/zone.tab",&raw,NULL,NULL)) {
+        char **lines=g_strsplit(raw,"\n",-1);
+        for(int i=0;lines[i];i++)if(*lines[i]&&*lines[i]!='#') {
+            char **fields=g_strsplit(lines[i],"\t",-1);
+            if(g_strv_length(fields)>=3)converter_add_zone(names,fields[2],NULL);
+            g_strfreev(fields);
+        }
+        g_strfreev(lines);g_free(raw);
+    }
+    convert_source=gtk_drop_down_new(G_LIST_MODEL(g_object_ref(names)),NULL);
+    convert_zone=gtk_drop_down_new(G_LIST_MODEL(names),NULL);
+    GtkWidget *selectors[]={convert_source,convert_zone};
+    for(int i=0;i<2;i++) {
+        gtk_drop_down_set_enable_search(GTK_DROP_DOWN(selectors[i]),TRUE);
+        gtk_widget_set_hexpand(selectors[i],TRUE);
+        gtk_widget_set_tooltip_text(selectors[i],i?"Destination timezone · type to search":"Source timezone · type to search");
+        GtkListItemFactory *factory=gtk_signal_list_item_factory_new();
+        g_signal_connect(factory,"setup",G_CALLBACK(zone_label_setup),NULL);
+        g_signal_connect(factory,"bind",G_CALLBACK(zone_label_bind),NULL);
+        gtk_drop_down_set_factory(GTK_DROP_DOWN(selectors[i]),factory);g_object_unref(factory);
+    }
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(convert_source),0);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(convert_zone),1);
+    GtkWidget *swap=gtk_button_new_with_label("⇄");gtk_widget_set_tooltip_text(swap,"Swap timezones, keeping the same instant");
+    converter_controls[0]=convert_source;converter_controls[1]=convert_date;
+    converter_controls[2]=convert_time;converter_controls[3]=swap;converter_controls[4]=convert_zone;
+    convert_reminder=gtk_button_new_with_label("Remind…");converter_controls[5]=convert_reminder;
+    gtk_widget_set_tooltip_text(convert_reminder,"Choose a future time, then open a calendar reminder draft to review and save");
+    g_signal_connect(convert_reminder,"clicked",G_CALLBACK(converter_remind),NULL);
+    gtk_box_append(GTK_BOX(row),convert_source);gtk_box_append(GTK_BOX(row),convert_date);gtk_box_append(GTK_BOX(row),convert_time);
+    gtk_box_append(GTK_BOX(row),swap);gtk_box_append(GTK_BOX(row),convert_zone);gtk_box_append(GTK_BOX(row),convert_reminder);
+    gtk_box_append(GTK_BOX(converter_box),row);
+    convert_result_box=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,12);gtk_widget_add_css_class(convert_result_box,"conversion-result");
+    GtkWidget *answer=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,16);gtk_widget_set_hexpand(answer,TRUE);
+    convert_result=text("","conversion-equation");gtk_label_set_selectable(GTK_LABEL(convert_result),TRUE);
+    convert_detail=text("","dash-key");
+    gtk_box_append(GTK_BOX(answer),convert_result);gtk_box_append(GTK_BOX(answer),convert_detail);
+    gtk_box_append(GTK_BOX(convert_result_box),answer);gtk_box_append(GTK_BOX(converter_box),convert_result_box);
+    converter_now(NULL,NULL);
+    g_signal_connect(convert_date,"changed",G_CALLBACK(converter_changed),NULL);
+    g_signal_connect(convert_time,"changed",G_CALLBACK(converter_changed),NULL);
+    g_signal_connect(convert_zone,"notify::selected",G_CALLBACK(converter_selected),NULL);
+    g_signal_connect(convert_source,"notify::selected",G_CALLBACK(converter_selected),NULL);
+    g_signal_connect(swap,"clicked",G_CALLBACK(converter_swap),NULL);
+    return converter_box;
+}
 static GtkWidget *card(const char *title,GtkWidget **value) {
     GtkWidget *box=gtk_box_new(GTK_ORIENTATION_VERTICAL,6);
     gtk_widget_add_css_class(box,"dash-system");gtk_widget_set_hexpand(box,TRUE);
@@ -397,31 +650,14 @@ static void phone_battery(GObject *source,GAsyncResult *result,gpointer data) {
         g_variant_lookup(d,"charge","i",&charge);
         g_variant_lookup(d,"isCharging","b",&charging);
         if(charge>=0&&charge<=100) {
-            phone_charge_sample(&phone_estimate,charge,charging,g_get_monotonic_time()/1000000.0);
-            PhoneChargeEstimate estimate=phone_estimate;
-            phone_charge_snapshot(&estimate,phone_device,charge,charging);
-            PhoneChargeSpeed speed=estimate.speed;
-            const char *state=speed==PHONE_CHARGE_LEARNING?"Charging · estimating speed…"
-                :speed==PHONE_CHARGE_SLOW?"Charging · est. slow"
-                :speed==PHONE_CHARGE_NORMAL?"Charging · est. normal"
-                :speed==PHONE_CHARGE_RAPID?"Charging · est. rapid"
-                :speed==PHONE_CHARGE_FULL?"Fully charged":"On battery";
-            GString *text=g_string_new(NULL);
-            g_string_append_printf(text,"Phone %d%%%s\n%s",charge,phone_charge_icon(speed),state);
-            if(speed>=PHONE_CHARGE_SLOW&&speed<=PHONE_CHARGE_RAPID)
-                g_string_append_printf(text,"\n%+.2f%%/min%s",estimate.per_minute,
-                                       estimate.observed_seconds<300?" · provisional":"");
-            set(phone_label,text->str);g_string_free(text,TRUE);
-            gtk_widget_set_tooltip_text(phone_label,
-                "Charging speed estimated from recent battery levels, not measured charger power.\n"
-                "First estimate after about one minute; refines over ten minutes.\n"
-                "Phone use and temperature affect the result. Charging usually slows near full.");
+            char *value=g_strdup_printf("%d%%%s",charge,charging?" ⚡ Charging":"");
+            set(phone_label,value);g_free(value);
         }
-        else {phone_charge_reset(&phone_estimate);set(phone_label,"Phone —");}
+        else set(phone_label,"—");
         g_variant_unref(d);
         g_variant_unref(r);
     }
-    else {phone_charge_reset(&phone_estimate);set(phone_label,"Phone unavailable");}
+    else set(phone_label,"Unavailable");
     phone_busy=FALSE;
     g_clear_error(&e);
 }
@@ -433,9 +669,6 @@ static void phone_devices(GObject *source,GAsyncResult *result,gpointer data) {
         gchar **devices;
         g_variant_get(r,"(^as)",&devices);
         if(devices[0]) {
-            if(g_strcmp0(phone_device,devices[0])) {
-                phone_charge_reset(&phone_estimate);g_free(phone_device);phone_device=g_strdup(devices[0]);
-            }
             char *path=g_strdup_printf("/modules/kdeconnect/devices/%s/battery",devices[0]);
             g_dbus_connection_call(bus,"org.kde.kdeconnect",path,"org.freedesktop.DBus.Properties","GetAll",g_variant_new("(s)","org.kde.kdeconnect.device.battery"),G_VARIANT_TYPE("(a{sv})"),G_DBUS_CALL_FLAGS_NO_AUTO_START,1500,cancel,phone_battery,NULL);
             g_free(path);
@@ -447,8 +680,7 @@ static void phone_devices(GObject *source,GAsyncResult *result,gpointer data) {
     g_clear_error(&e);
     if(!requested) {
         phone_busy=FALSE;
-        phone_charge_reset(&phone_estimate);
-        set(phone_label,"Phone offline");
+        set(phone_label,"Offline");
     }
 }
 static gboolean phone_update(gpointer unused) {
@@ -460,7 +692,7 @@ static gboolean phone_update(gpointer unused) {
 }
 static void phone_bus_ready(GObject *source,GAsyncResult *result,gpointer data) {
     GError *error=NULL;bus=g_bus_get_finish(result,&error);
-    if(bus)phone_update(NULL);else {phone_charge_reset(&phone_estimate);set(phone_label,"Phone unavailable");}
+    if(bus)phone_update(NULL);else set(phone_label,"Unavailable");
     g_clear_error(&error);
 }
 static gboolean bluetooth_refresh(gpointer data) {
@@ -488,7 +720,7 @@ static void audio_state(pa_context *context,void *data) {
 }
 static void activate_dashboard(GtkApplication *app,gpointer data) {
     if(popup){quit_dashboard(NULL);return;}
-    popup=gtk_application_window_new(app);gtk_window_set_title(GTK_WINDOW(popup),"World clock & system");
+    popup=gtk_application_window_new(app);simple_ui_window(GTK_WINDOW(popup));gtk_window_set_title(GTK_WINDOW(popup),"World clock & system");
     gtk_widget_add_css_class(popup,"dashboard");gtk_widget_add_css_class(popup,"system-dashboard");
     /* Ordinary floating window: other applications retain normal input. */
     gtk_window_set_decorated(GTK_WINDOW(popup),FALSE);
@@ -505,63 +737,72 @@ static void activate_dashboard(GtkApplication *app,gpointer data) {
     gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(scroll),TRUE);
     gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(scroll),popup_height);
     gtk_window_set_child(GTK_WINDOW(popup),scroll);
-    GtkWidget *body=gtk_box_new(GTK_ORIENTATION_VERTICAL,12);gtk_widget_add_css_class(body,"dashboard-panel");gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll),body);
+    GtkWidget *body=gtk_box_new(GTK_ORIENTATION_VERTICAL,6);gtk_widget_add_css_class(body,"dashboard-panel");gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll),body);
     gtk_box_append(GTK_BOX(body),text("World clock & system","dash-title"));
-    gtk_box_append(GTK_BOX(body),system_facts());
-    GtkSizeGroup *summary_size=gtk_size_group_new(GTK_SIZE_GROUP_VERTICAL);
+    GtkWidget *details=gtk_expander_new("System details");gtk_expander_set_child(GTK_EXPANDER(details),system_facts());
+    gtk_expander_set_expanded(GTK_EXPANDER(details),popup_height>=850);gtk_box_append(GTK_BOX(body),details);
     GtkWidget *row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,12);gtk_box_set_homogeneous(GTK_BOX(row),TRUE);
-    for(gsize i=0;i<dashboard_settings.clocks;i++){GtkWidget *c=card(dashboard_settings.cities[i],&clocks[i]);gtk_widget_add_css_class(clocks[i],"world-time");gtk_size_group_add_widget(summary_size,c);gtk_box_append(GTK_BOX(row),c);}
+    for(gsize i=0;i<dashboard_settings.clocks;i++){GtkWidget *c=card(dashboard_settings.cities[i],&clocks[i]);gtk_widget_add_css_class(clocks[i],"world-time");gtk_box_append(GTK_BOX(row),c);}
     gtk_box_append(GTK_BOX(body),row);
     gtk_widget_set_visible(row,dashboard_settings.show_clocks);
+    gtk_box_append(GTK_BOX(body),time_converter());
     GtkWidget *market_row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,12);gtk_box_set_homogeneous(GTK_BOX(market_row),TRUE);
     for(gsize i=0;i<dashboard_settings.markets;i++) {
         GtkWidget *c=card(dashboard_settings.labels[i],&market_prices[i]);
         gtk_orientable_set_orientation(GTK_ORIENTABLE(c),GTK_ORIENTATION_HORIZONTAL);
         gtk_widget_add_css_class(c,"market-card");
         market_trends[i]=text("24h change unavailable","dash-info");gtk_box_append(GTK_BOX(c),market_trends[i]);
+        for(GtkWidget *child=gtk_widget_get_first_child(c);child;child=gtk_widget_get_next_sibling(child))
+            if(GTK_IS_LABEL(child))gtk_label_set_wrap(GTK_LABEL(child),FALSE);
         gtk_box_append(GTK_BOX(market_row),c);
     }
     gtk_box_append(GTK_BOX(body),market_row);
+    gtk_box_reorder_child_after(GTK_BOX(body),market_row,details);
     gtk_widget_set_visible(market_row,dashboard_settings.show_markets);
-    GtkWidget *grid=gtk_grid_new();gtk_grid_set_column_spacing(GTK_GRID(grid),12);gtk_grid_set_row_spacing(GTK_GRID(grid),12);gtk_grid_set_column_homogeneous(GTK_GRID(grid),TRUE);
+    GtkWidget *grid=gtk_grid_new();gtk_grid_set_column_spacing(GTK_GRID(grid),8);gtk_grid_set_row_spacing(GTK_GRID(grid),6);gtk_grid_set_column_homogeneous(GTK_GRID(grid),TRUE);
     GtkWidget **values[]={&cpu,&memory,&disk,&network,&volume,&bluetooth,&battery,&uptime,&phone_label};const char *titles[]={"CPU","MEMORY","DISK","NETWORK","VOLUME","BLUETOOTH","BATTERY","UPTIME","PHONE"};
     for(int i=0;i<9;i++) {
         GtkWidget *c=card(titles[i],values[i]);
-        if(i>=6)gtk_size_group_add_widget(summary_size,c);
         if(i==0)graph_add(c,&cpu_graph,"0–100% · last 60 samples");
         if(i==1)graph_add(c,&memory_graph,"Memory in use");
         if(i==2)graph_add(c,&disk_graph,"Root filesystem");
         if(i==3)graph_add(c,&network_graph,"↓ Download · ↑ Upload");
         if(i<6) {
             const char *hint=i==0?"CPU details · Super+Ctrl+C":i==1?"Memory details · Super+Ctrl+E":i==2?"Disk space · Super+Ctrl+D":i==3?"Open network · Super+Ctrl+W":i==4?"Sound devices · Super+Ctrl+S":"Open Bluetooth · Super+Ctrl+B";
-            GtkWidget *footer=text(hint,"dash-key");
-            gtk_widget_set_vexpand(footer,TRUE);gtk_widget_set_valign(footer,GTK_ALIGN_END);
-            gtk_box_append(GTK_BOX(c),footer);
             GtkWidget *button=gtk_button_new();control_cards[i]=button;gtk_button_set_child(GTK_BUTTON(button),c);
             gtk_widget_add_css_class(button,"control-card");gtk_widget_set_cursor_from_name(button,"pointer");
             gtk_widget_set_tooltip_text(button,hint);
             g_signal_connect(button,"clicked",G_CALLBACK(open_control),GINT_TO_POINTER(i));
             c=button;
         }
-        if(i<3)gtk_grid_attach(GTK_GRID(grid),c,i*2,0,2,1);
-        else if(i==3)gtk_grid_attach(GTK_GRID(grid),c,0,1,3,2);
-        else if(i<6)gtk_grid_attach(GTK_GRID(grid),c,3,i-3,3,1);
-        else gtk_grid_attach(GTK_GRID(grid),c,(i-6)*2,3,2,1);
+        gtk_grid_attach(GTK_GRID(grid),c,i%3,i/3,1,1);
     }
-    g_object_unref(summary_size);
-    gtk_box_append(GTK_BOX(body),grid);gtk_box_append(GTK_BOX(body),text("H J K L / Arrows  Move · Enter / Space  Open · Esc / Q  Close","dash-key"));
+    gtk_box_append(GTK_BOX(body),grid);gtk_box_append(GTK_BOX(body),text("h/l Move · j/k or −/+ Adjust date/time · Tab Next · Esc Cards / Close","dash-key"));
     /* Appearance comes from shared defaults; this file is an optional override. */
     char *path=g_build_filename(g_get_user_config_dir(),"simplepanel/dashboard.css",NULL);
     GtkCssProvider *style=gtk_css_provider_new();simple_theme_load(style,path);
     gtk_style_context_add_provider_for_display(gdk_display_get_default(),GTK_STYLE_PROVIDER(style),GTK_STYLE_PROVIDER_PRIORITY_USER+2);
     g_object_unref(style);g_free(path);
+    /* Geometry stays compact even when a personal theme increases card padding. */
+    GtkCssProvider *compact=gtk_css_provider_new();
+    gtk_css_provider_load_from_string(compact,
+        "window.system-dashboard .dashboard-panel { padding:12px; }"
+        "window.system-dashboard .dash-system { padding:8px; }"
+        "window.system-dashboard .dash-title { font-size:1.15rem; margin-bottom:0; }"
+        "window.system-dashboard .market-card { padding:5px 8px; }"
+        "window.system-dashboard entry, window.system-dashboard dropdown button { min-height:26px; padding:2px 6px; }"
+        "window.system-dashboard .conversion-result { background:alpha(@simple_heading,.07); border-radius:6px; padding:5px 8px; }"
+        "window.system-dashboard label.conversion-equation { color:@simple_heading; font-size:1.08rem; font-weight:600; }");
+    gtk_style_context_add_provider_for_display(gdk_display_get_default(),GTK_STYLE_PROVIDER(compact),GTK_STYLE_PROVIDER_PRIORITY_USER+3);
+    g_object_unref(compact);
     GtkEventController *keys=gtk_event_controller_key_new();gtk_event_controller_set_propagation_phase(keys,GTK_PHASE_CAPTURE);g_signal_connect(keys,"key-pressed",G_CALLBACK(key),NULL);gtk_widget_add_controller(popup,keys);
     g_bus_get(G_BUS_TYPE_SESSION,cancel,phone_bus_ready,NULL);
     tick(NULL);timer=g_timeout_add_seconds(1,tick,NULL);bluetooth_refresh(NULL);bt_timer=g_timeout_add_seconds(10,bluetooth_refresh,NULL);
     pulse_loop=pa_glib_mainloop_new(NULL);pulse=pa_context_new(pa_glib_mainloop_get_api(pulse_loop),"Simplepanel system dashboard");
     pa_context_set_state_callback(pulse,audio_state,NULL);if(pa_context_connect(pulse,NULL,PA_CONTEXT_NOFLAGS,NULL)<0)set(volume,"Audio unavailable");
     gtk_window_present(GTK_WINDOW(popup));
-    gtk_widget_grab_focus(control_cards[3]);
+    gtk_widget_grab_focus(convert_source);
+    gtk_window_set_focus_visible(GTK_WINDOW(popup),TRUE);
 }
 int system_dashboard_main(int duration) {
     cancel=g_cancellable_new();net_previous=g_hash_table_new_full(g_str_hash,g_str_equal,g_free,g_free);
@@ -578,7 +819,9 @@ int system_dashboard_main(int duration) {
     if(fetch_process){g_subprocess_force_exit(fetch_process);g_clear_object(&fetch_process);}
     if(timer)g_source_remove(timer);
     if(bt_timer)g_source_remove(bt_timer);
+    if(convert_flash)g_source_remove(convert_flash);
     if(pulse){pa_context_disconnect(pulse);pa_context_unref(pulse);}if(pulse_loop)pa_glib_mainloop_free(pulse_loop);
     for(gsize i=0;i<dashboard_settings.clocks;i++)g_time_zone_unref(timezones[i]);
+    if(convert_zones)g_ptr_array_unref(convert_zones);
     g_hash_table_unref(net_previous);g_free(cpu_model);g_object_unref(application);g_object_unref(cancel);return result;
 }

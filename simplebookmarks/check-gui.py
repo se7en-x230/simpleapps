@@ -20,12 +20,16 @@ with TemporaryDirectory() as td:
     key('Return',ctrl);key('j');assert app.selected()==1
     key('x',ctrl);assert app.dialog is None
     key('e');assert app.dialog
-    label,url,error=app.edit_fields;label.set_text('Edited');dialog('Tab');assert app.dialog.get_focus().is_ancestor(url)
-    dialog('Return',ctrl);assert store.records[1]['label']=='Edited'
+    label,url,error=app.edit_fields;label.set_text('Edited');app.edit_tag.set_text(' Work ');dialog('Tab');assert app.dialog.get_focus().is_ancestor(url)
+    dialog('s',ctrl);assert store.records[1]['label']=='Edited' and store.records[1]['category']=='Work'
     key('x');dialog('Escape');assert len(store.records)==3
     key('x');dialog('Tab');dialog('Return');assert len(store.records)==2
-    key('a');label,url,error=app.edit_fields;label.set_text('New');url.set_text('javascript:bad');dialog('Return',ctrl);assert app.dialog and error.get_text()
-    url.set_text('https://example.org');dialog('Return',ctrl);assert len(store.records)==3
+    key('a');label,url,error=app.edit_fields;label.set_text('New');app.edit_tag.set_text('Work');url.set_text('javascript:bad');dialog('s',ctrl);assert app.dialog and error.get_text()
+    url.set_text('https://example.org');dialog('Tab');dialog('Tab');dialog('Tab');dialog('Tab');dialog('Return');assert len(store.records)==3
+    app.list.select_row(app.list.get_row_at_index(2))
+    key('e');label,url,error=app.edit_fields;label.set_text('Mouse saved');assert app.edit_tag.get_text()=='Work';app.edit_tag.set_text('')
+    buttons=error.get_next_sibling();buttons.get_last_child().emit('clicked')
+    assert app.dialog is None and any(r['label']=='Mouse saved' and 'category' not in r for r in store.records)
     app.search.set_text('Reference');app.refresh();assert len(app.visible)==1
     key('Return');assert opened==['https://example.com/Gamma']
     app.search.set_text('');app.refresh();assert app.visible[0]==1

@@ -43,7 +43,7 @@ class Disk(Gtk.Application):
         head=box(False);title=label('Disk space','sound-title');title.set_hexpand(True);head.append(title)
         self.scope=Gtk.DropDown.new_from_strings(['Local disks','All mounted storage']);self.scope.connect('notify::selected',lambda *_:self.refresh());head.append(self.scope)
         self.refresh_button=Gtk.Button(icon_name='view-refresh-symbolic',tooltip_text='Refresh');self.refresh_button.connect('clicked',lambda *_:self.refresh());head.append(self.refresh_button)
-        close=Gtk.Button(icon_name='window-close-symbolic');close.connect('clicked',lambda *_:self.window.close());head.append(close);body.append(head)
+        body.append(head)
         self.status=label('Reading storage…','sound-hint');body.append(self.status)
         scroll=Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER,vexpand=True);self.cards=box(spacing=12);scroll.set_child(self.cards);body.append(scroll)
         body.append(label(HINT,'sound-hint'))

@@ -1,0 +1,7 @@
+uuid = "ddfa817f-11b4-44f1-9c61-c365ed103d18"
+name = "Simpletag bridge"
+description = "Local Simpleapps frontend for Picard folder tagging."
+api = ["3.0"]
+version = "1.0.0"
+authors = ["Simpleapps"]
+license = "GPL-2.0-or-later"

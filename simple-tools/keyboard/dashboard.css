@@ -1,0 +1,28 @@
+/* Keep the shared type scale; result names and shortcuts are normal-size bold text. */
+window.simple-app.keyboard-reference .shortcut-title {
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: 0;
+    color: @simple_fg;
+}
+
+/* Match the layout page's inset and rounded controls without a second panel. */
+window.simple-app.keyboard-reference .shortcut-list { background: transparent; }
+window.simple-app.keyboard-reference .shortcut-list row {
+    border-radius: 9px;
+    margin-bottom: 4px;
+}
+
+/* A quiet inset surface separates the working area from the common header. */
+window.simple-app.keyboard-reference .reference-content {
+    background: @simple_surface;
+    border: 1px solid @simple_border;
+    border-radius: 12px;
+    box-shadow: 0 3px 8px alpha(black, 0.16);
+}
+window.simple-app.keyboard-reference .shortcut-list row {
+    border: 1px solid alpha(@simple_border, 0.6);
+}
+window.simple-app.keyboard-reference .shortcut-list row:selected {
+    border-color: @simple_selected;
+}

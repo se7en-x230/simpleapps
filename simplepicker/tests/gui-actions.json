@@ -85,10 +85,6 @@
   ],
   [
     "cliphist",
-    "decode"
-  ],
-  [
-    "cliphist",
     "-preview-width",
     "4096",
     "list"
@@ -125,6 +121,14 @@
     "helper",
     "open",
     "https://example.test/"
+  ],
+  [
+    "wl-paste",
+    "--no-newline"
+  ],
+  [
+    "wl-paste",
+    "--no-newline"
   ],
   [
     "wl-paste",

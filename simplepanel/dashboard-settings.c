@@ -111,3 +111,5 @@ void simple_market_refresh(void) {
     g_free(ids);g_free(url);
 }
 void simple_market_stop(void) {if(request)g_subprocess_force_exit(request);}
+
+gboolean simple_market_pending(void) {return request!=NULL;}

@@ -72,6 +72,7 @@ Exec={stub} app-action
         assert 'CRITICAL' not in result.stderr and 'TEST:' not in result.stderr,(name,result.stderr)
         print('PASS:',name,flush=True)
         return result
+    run('short menu fits rows',['-d'],[{'max_panel_height':480,'key':'Escape'}],expected=1,stdin='One\nTwo\nThree\nFour\nFive\nSix\nClose\n')
     run('dmenu filtering and selection',['-d'],[{'query':'cafe'},{'key':'Return'}],stdin='Other\nCafé\n')
     run('masked input',['-x'],[{'query':'secret text'},{'key':'Return'}])
     run('app launch',['--apps'],[{'select':'native-test.desktop','key':'Return'}])
@@ -88,8 +89,14 @@ Exec={stub} app-action
     run('web prefix',['--websearch'],[{'query':'t café words'},{'key':'Return'}])
     run('web engine menu',['--websearch'],[{'query':'plain query'},{'key':'Return'}])
     run('bookmark open/history',['--bookmarks'],[{'key':'Return'}])
-    run('bookmark add',['--bookmark-add'],[{'query':'New example'},{'key':'Return'}])
-    assert len(json.loads((data/'bookmarks.json').read_text()))==2
+    run('bookmark add with tag',['--bookmark-add'],[{'query':'New example'},{'key':'Return'},{'query':' Reference '},{'key':'Return'}])
+    records=json.loads((data/'bookmarks.json').read_text())
+    assert len(records)==2 and records[-1]['category']=='Reference'
+    run('bookmark cancel at tag',['--bookmark-add'],[{'query':'Cancelled'},{'key':'Return'},{'key':'Escape'}])
+    assert json.loads((data/'bookmarks.json').read_text())==records
+    run('bookmark optional empty tag',['--bookmark-add'],[{'query':'Untagged'},{'key':'Return'},{'key':'Return'}])
+    records=json.loads((data/'bookmarks.json').read_text())
+    assert len(records)==3 and 'category' not in records[-1]
     run('window focus',['--windows'],[{'key':'Return'}])
     run('window move',['--windows'],[{'key':'m','ctrl':True}])
     run('window close',['--windows'],[{'key':'d','ctrl':True}])

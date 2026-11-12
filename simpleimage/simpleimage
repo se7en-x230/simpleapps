@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import threading
 import sys
@@ -92,6 +93,23 @@ def texture_for_pixbuf(pix):
     return Gdk.MemoryTexture.new(width,height,fmt,data,stride)
 
 
+def copy_image_to_clipboard(clipboard, pixbuf):
+    """Publish a PNG MIME payload so other applications can paste the image."""
+    from gi.repository import Gdk, GLib
+    success, data = pixbuf.save_to_bufferv('png', [], [])
+    if not success:
+        raise ValueError('Could not encode clipboard image')
+    if os.environ.get('WAYLAND_DISPLAY') and shutil.which('wl-copy'):
+        result = subprocess.run(['wl-copy', '--type', 'image/png'], input=bytes(data),
+                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=15)
+        if result.returncode:
+            raise ValueError(result.stderr.decode(errors='replace').strip() or 'wl-copy failed')
+        return
+    provider = Gdk.ContentProvider.new_for_bytes('image/png', GLib.Bytes.new(data))
+    if not clipboard.set_content(provider):
+        raise ValueError('Clipboard rejected the image')
+
+
 def gui(cfg,args):
     import gi
     gi.require_version('Gtk','4.0');gi.require_version('GdkPixbuf','2.0');gi.require_foreign('cairo')
@@ -111,8 +129,8 @@ def gui(cfg,args):
             self.large_thumbnails=False;self.pending=None;self.show_grid=False;self.slide=0;self.full=False;self.prefix='';self.marked=set();self.trashing=False
 
         def do_activate(self):
-            self.win=Gtk.ApplicationWindow(application=self,title='Simpleimage');self.win.set_default_size(cfg['window_width'],cfg['window_height']);self.win.connect('close-request',self.close)
-            css=Gtk.CssProvider();css.load_from_data(b'window {background:#272625;color:#d8ceb0;} .title {color:#d99a00;font-weight:bold;} button {background:#35322e;color:#d8ceb0;} button:focus {background:#700909;color:#fff5ef;outline:2px solid #d99a00;} gridview {background:#272625;color:#d8ceb0;} gridview label {color:#d8ceb0;} gridview child:selected {background:#700909;}')
+            self.win=Gtk.ApplicationWindow(application=self,title='Simpleimage'); attach(self.win);self.win.set_default_size(cfg['window_width'],cfg['window_height']);self.win.connect('close-request',self.close)
+            css=Gtk.CssProvider();css.load_from_data(b'window {background:@simple_bg;color:@simple_fg;} .title {color:@simple_heading;font-weight:bold;} button {background:@simple_button;color:@simple_fg;} button:focus {background:@simple_accent;color:@simple_on_accent;outline:2px solid @simple_heading;} gridview {background:@simple_bg;color:@simple_fg;} gridview label {color:@simple_fg;} gridview child:selected {background:@simple_accent;}')
             Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(),css,Gtk.STYLE_PROVIDER_PRIORITY_USER+1)
             box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=3);self.win.set_child(box)
             self.bar=Gtk.Box(spacing=6);self.bar.set_margin_start(8);self.bar.set_margin_end(8);box.append(self.bar)
@@ -121,7 +139,7 @@ def gui(cfg,args):
             for text,fn in [('Open [o]',self.choose),('Edit [e]',self.edit),('Trash [x]',self.trash),('Refresh [r]',self.refresh),('Print [Ctrl+p]',self.print_images)]:
                 b=Gtk.Button(label=text);b.connect('clicked',lambda _,f=fn:f());self.bar.append(b)
             self.stack=Gtk.Stack(vexpand=True,hexpand=True);box.append(self.stack)
-            self.scroll=Gtk.ScrolledWindow();self.picture=Gtk.Picture(can_shrink=True);self.picture.set_content_fit(Gtk.ContentFit.CONTAIN);self.scroll.set_child(self.picture);self.stack.add_named(self.scroll,'image')
+            self.scroll=Gtk.ScrolledWindow();self.picture=Gtk.Picture(can_shrink=True);self.picture.set_focusable(True);self.picture.set_content_fit(Gtk.ContentFit.CONTAIN);self.scroll.set_child(self.picture);self.stack.add_named(self.scroll,'image')
             self.store=Gio.ListStore.new(Item);self.selection=Gtk.SingleSelection.new(self.store)
             factory=Gtk.SignalListItemFactory();factory.connect('setup',self.thumb_setup);factory.connect('bind',self.thumb_bind);factory.connect('unbind',self.thumb_unbind)
             self.grid=Gtk.GridView.new(self.selection,factory);self.grid.set_min_columns(1);self.grid.set_max_columns(20);self.grid.connect('activate',lambda _,position:self.open_thumb(position))
@@ -171,6 +189,7 @@ def gui(cfg,args):
 
         def show(self,index):
             if not self.files:return
+            if not self.show_grid:self.picture.grab_focus()
             self.index=max(0,min(index,len(self.files)-1));path=self.current();self.selection.set_selected(self.index)
             self.generation+=1;generation=self.generation;self.rotation=0;self.mirror=False;self.pixbuf=None;self.picture.set_paintable(None)
             self.name.set_text(path.name);self.win.set_title(path.name+' — Simpleimage');self.message('Loading '+path.name+'…')
@@ -272,6 +291,7 @@ def gui(cfg,args):
             self.show_grid=not self.show_grid;self.stack.set_visible_child_name('grid' if self.show_grid else 'image')
             if self.show_grid:self.grid.grab_focus()
             else:
+                self.picture.grab_focus()
                 position=self.selection.get_selected()
                 if position<len(self.files) and position!=self.index:self.show(position)
 
@@ -481,7 +501,13 @@ def gui(cfg,args):
                 paths=[p for p in self.files if p in self.marked] or ([self.selected_path()] if self.selected_path() else [])
                 self.win.get_clipboard().set('\n'.join(map(str,paths)));self.message('Paths copied')
             elif name=='Y' or (ctrl and name=='c'):
-                if self.pixbuf:self.win.get_clipboard().set(texture_for_pixbuf(self.displayed));self.message('Image copied (current decoded view)')
+                if self.pixbuf:
+                    try:
+                        copy_image_to_clipboard(self.win.get_clipboard(),self.displayed)
+                        self.message('Image copied as PNG (current decoded view)')
+                    except (GLib.Error,ValueError,OSError,subprocess.SubprocessError) as error:
+                        self.message('Image copy failed: '+str(error))
+                else:self.message('No loaded image to copy')
             elif self.show_grid and self.files:
                 position=self.selection.get_selected();columns=self.columns
                 if name in ('h','j','k','l','n','p','space','BackSpace'):
@@ -521,6 +547,7 @@ for _keyboard_root in (_KeyboardPath(__file__).resolve().parent.parent / 'simple
         _keyboard_sys.path.insert(0, str(_keyboard_root))
         break
 from simple_keyboard import control_key
+from simple_ui import attach
 
 
 def main():

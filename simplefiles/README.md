@@ -55,3 +55,30 @@ Keyboard confirmation: `Ctrl+Enter` opens, chooses or saves from any field.
 `Esc` cancels immediately; `q` cancels outside text fields. `Tab` / `Shift+Tab`
 moves through controls, and `Enter` or `Space` presses the focused button.
 The file list retains its Yazi-style navigation and selection keys.
+
+## Shared base and portable installation
+
+Uses the shared C/GTK4 base in `simple-common`. Python UI code calls the same native library through a thin adapter. Shared theme and keyboard adapters replace separate implementations; app-specific commands and content remain local.
+
+Requires Linux and Python 3.11+ for the source installer. Building the shared base requires a C compiler, make, pkg-config and GTK4 >= 4.12 development files. Install dependencies using your distribution’s package manager; package names can differ.
+
+- Libraries / pkg-config modules: `gtk4 >= 4.12`.
+- Python imports: `gi`.
+- Required commands: `python3`, `cc`, `make`, `pkg-config`.
+- Desktop requirements: GTK desktop; optional termfilechooser portal adapter.
+
+From the suite checkout (no pacman or distro detection on this path):
+
+```sh
+./install --dependencies simplefiles
+./install --check simplefiles
+./install --no-packages --install simplefiles
+```
+
+To build a relocatable staging tree without changing your installation:
+
+```sh
+./install --install simplefiles --stage "$PWD/package-simplefiles"
+```
+
+Keep `simple-common` alongside the app sources. Staged files are under `.local/`; move that prefix as a unit so executables, shared libraries and resources stay together. Individual C Makefiles also accept `PREFIX`/`DESTDIR` where documented. See [portable builds](../docs/portability.md) for Debian/Arch dependency examples and limitations.

@@ -18,8 +18,9 @@ from gi.repository import Gtk, Gdk, Gio, GLib
 
 for _root in [*Path(__file__).resolve().parents, Path(os.environ.get('XDG_DATA_HOME',Path.home()/'.local/share'))]:
     if (_root/'simple-common/simple_keyboard.py').is_file():
-        sys.path.insert(0,str(_root/'simple-common'));break
+        _theme_sys.path.insert(0,str(_root/'simple-common'));break
 from simple_keyboard import control_key
+from simple_ui import attach
 
 def cards_for(content, sections=True):
     if isinstance(content, list):
@@ -43,6 +44,7 @@ def label(text, style):
 class InfoWindow(Gtk.ApplicationWindow):
     def __init__(self, app, title, provider, *, sections=True, terminal=None, fit_contents=False, keys=None, key_scope=None):
         super().__init__(application=app, title=title)
+        attach(self)
         self.keybindings = KeyBindings(key_scope, keys)
         self.fleet_vim = True  # Information cards always use Vim navigation; no search field.
         self.provider, self.sections, self.terminal = provider, sections, terminal
@@ -63,12 +65,12 @@ class InfoWindow(Gtk.ApplicationWindow):
         self.set_default_size(min(780 if fit_contents else 700, rect.width-64), min(540 if fit_contents else 620, rect.height-80))
         css = Gtk.CssProvider()
         _load_simple_css(css,str(Path(os.environ.get('XDG_CONFIG_HOME', Path.home()/'.config'))/'simplepicker/dashboard/info.css'))
-        Gtk.StyleContext.add_provider_for_display(display, css, Gtk.STYLE_PROVIDER_PRIORITY_USER+3)
+        Gtk.StyleContext.add_provider_for_display(display, css, Gtk.STYLE_PROVIDER_PRIORITY_USER+1)
         self.css = css
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        body.add_css_class('sound-body'); self.set_child(body); self.body = body
+        body.add_css_class('sound-body'); body.add_css_class('root'); self.set_child(body); self.body = body
         header = Gtk.Box(spacing=12)
-        title_label = label(title, 'sound-title'); title_label.set_hexpand(True); header.append(title_label)
+        title_label = label('Simplepicker · '+title, 'title'); title_label.set_hexpand(True); header.append(title_label)
         header.append(self.button('Close', self.close)); body.append(header)
         bar = Gtk.Box(spacing=8); self.toolbar = bar
         self.copy_button = self.button('Copy all', lambda: self.copy(self.text)); bar.append(self.copy_button)
@@ -225,6 +227,7 @@ class InfoWindow(Gtk.ApplicationWindow):
         self.card_values = []
         for index, data in enumerate(cards):
             card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10); card.add_css_class('sound-card')
+            card.add_css_class('card'); card.add_css_class('info-card')
             card.set_focusable(True)
             card.connect('notify::has-focus', lambda card, _, i=index: self.select_card(i, focus=False) if card.has_focus() else None)
             click = Gtk.GestureClick()

@@ -36,7 +36,7 @@ def registration(files, stage, names, owners, dirs):
 def safe_path(path, dirs):
     # Records may only remove installed programs and resources, never settings,
     # maintained sources, or a directory tree containing personal data.
-    roots = [dirs['bin'], dirs['data'], dirs['home'] / '.local/lib']
+    roots = [dirs['bin'], dirs['data'], dirs['home'] / '.local/lib', dirs['home'] / '.local/include']
     if not path.is_absolute() or '..' in path.parts or not any(path != root and path.is_relative_to(root) for root in roots):
         raise ValueError('Invalid uninstall receipt path: ' + str(path))
     if any(parent.is_symlink() for parent in [path, *path.parents]):

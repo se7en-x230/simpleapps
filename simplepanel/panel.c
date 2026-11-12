@@ -3,6 +3,7 @@
 #include "simple-theme.h"
 #include <gtk/gtk.h>
 #include "media.h"
+#include "panel-modules.h"
 #include "dashboard-settings.h"
 #include "phone-charge.h"
 #include "phone-charge-cache.h"
@@ -26,19 +27,19 @@ typedef struct  {
 }
 Feed;
 static GtkApplication *app;
-static GtkWidget *window,*tags,*title_label,*media_label,*music,*clock_label,*net_label,*volume_label,*invest_label,*battery_label,*phone_label,*visualizer,*osd_window,*osd_label,*osd_revealer,*osd_meter,*osd_icon;
+static GtkWidget *window,*tags,*title_label,*media_label,*media_progress,*music,*clock_label,*net_label,*volume_label,*battery_label,*phone_label,*visualizer,*osd_window,*osd_label,*osd_revealer,*osd_meter,*osd_icon;
 static GDBusConnection *bus;
 static GCancellable *cancel;
 static GKeyFile *config;
 static char *config_path;
 static GTimeZone *panel_timezone;
 static char *monitor_name,*clock_format,*interface_name,*selected_player,*sink_name,*cava_path;
-static gboolean preview,preview_layer,demo,stopping,media_busy,phone_busy,invest_busy,enable_cava=TRUE,enable_invest=TRUE,enable_phone=TRUE,enable_osd;
+static gboolean preview,preview_layer,demo,stopping,media_busy,phone_busy,enable_cava=TRUE,enable_phone=TRUE,enable_osd;
 static int duration,height=32,volume=-1,edge_margin=10,top_margin=6;
 static double background_opacity=.55;
 static gboolean muted;
-static guint osd_timer,invest_timeout;
-static GSubprocess *cava_process,*invest_process;
+static guint osd_timer;
+static GSubprocess *cava_process;
 static GDataInputStream *cava_input;
 static PhoneChargeEstimate phone_estimate;
 static char *phone_device;
@@ -87,9 +88,9 @@ static const char *strfield(json_object *o,const char *name) {
 static gboolean stop_app(gpointer unused) {
     stopping=TRUE;
     simple_market_stop();
+    panel_modules_stop();
     g_cancellable_cancel(cancel);
     if(cava_process)g_subprocess_force_exit(cava_process);
-    if(invest_process)g_subprocess_force_exit(invest_process);
     g_application_quit(G_APPLICATION(app));
     return G_SOURCE_REMOVE;
 }
@@ -424,14 +425,10 @@ static gboolean tick(gpointer unused) {
     g_free(text);
     g_date_time_unref(now);
     if(demo)return G_SOURCE_CONTINUE;
-    if(enable_invest&&!g_getenv("SIMPLEPANEL_INVEST_COMMAND")) {
-        simple_market_refresh();json_object *prices=simple_market_read();GString *summary=g_string_new(NULL);
-        for(gsize i=0;i<dashboard_settings.markets;i++){char *price=simple_market_number(prices,i);g_string_append_printf(summary,"%s%s",i?" ":"",price);g_free(price);}
-        set_text(invest_label,summary->str);g_string_free(summary,TRUE);if(prices)json_object_put(prices);
-    }
     static char *last_iface;
     static guint64 rx,tx;
     static gint64 last;
+    if(!panel_module_enabled("network"))return G_SOURCE_CONTINUE;
     char *iface=default_interface();
     gint64 time=g_get_monotonic_time();
     if(iface) {
@@ -462,6 +459,22 @@ static gboolean tick(gpointer unused) {
 static unsigned media_pending;
 static int media_score;
 static char *media_best,*media_player;
+typedef struct {
+    gint64 position, length, sampled;
+    double rate;
+    gboolean playing;
+} MediaProgress;
+static MediaProgress media_candidate,media_current;
+static gboolean media_progress_tick(gpointer unused) {
+    gboolean known=media_current.length>0&&media_current.position>=0;
+    gtk_widget_set_visible(media_progress,known);
+    double position=media_current.position;
+    if(known&&media_current.playing)
+        position+=(g_get_monotonic_time()-media_current.sampled)*media_current.rate;
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(media_progress),
+        known?CLAMP(position/media_current.length,0.0,1.0):0.0);
+    return G_SOURCE_CONTINUE;
+}
 static void media_result(GObject *source,GAsyncResult *result,gpointer data) {
     char *name=data;
     GError *e=NULL;
@@ -489,6 +502,12 @@ static void media_result(GObject *source,GAsyncResult *result,gpointer data) {
             media_best=g_strdup_printf("%s %s",score==3?"▶":"Ⅱ",line);g_free(line);
             g_free(media_player);
             media_player=g_strdup(name);
+            media_candidate=(MediaProgress){.position=-1,.rate=1.0,
+                .sampled=g_get_monotonic_time(),.playing=score==3};
+            g_variant_lookup(dict,"Position","x",&media_candidate.position);
+            g_variant_lookup(metadata,"mpris:length","x",&media_candidate.length);
+            g_variant_lookup(dict,"Rate","d",&media_candidate.rate);
+            if(!isfinite(media_candidate.rate))media_candidate.rate=1.0;
         }
         g_free(artists);
         if(metadata)g_variant_unref(metadata);
@@ -499,6 +518,8 @@ static void media_result(GObject *source,GAsyncResult *result,gpointer data) {
     g_free(name);
     if(--media_pending==0) {
         set_text(media_label,media_best?media_best:"");
+        media_current=media_score?media_candidate:(MediaProgress){0};
+        media_progress_tick(NULL);
         gtk_widget_set_visible(music,media_score==3);
         g_free(selected_player);
         selected_player=g_strdup(media_player);
@@ -526,16 +547,21 @@ static void media_names(GObject *source,GAsyncResult *result,gpointer data) {
     if(!media_pending) {
         media_busy=FALSE;
         set_text(media_label,"");
+        media_current=(MediaProgress){0};
+        media_progress_tick(NULL);
         gtk_widget_set_visible(music,FALSE);
         g_clear_pointer(&selected_player,g_free);
     }
 }
 static gboolean media_update(gpointer unused) {
-    if(bus&&!media_busy&&!stopping) {
+    if(bus&&panel_module_enabled("music")&&!media_busy&&!stopping) {
         media_busy=TRUE;
         g_dbus_connection_call(bus,"org.freedesktop.DBus","/org/freedesktop/DBus","org.freedesktop.DBus","ListNames",NULL,G_VARIANT_TYPE("(as)"),G_DBUS_CALL_FLAGS_NONE,1500,cancel,media_names,NULL);
     }
     return G_SOURCE_CONTINUE;
+}
+static void media_seeked(GDBusConnection *c,const char *sender,const char *path,const char *iface,const char *signal,GVariant *params,gpointer data) {
+    media_update(NULL);
 }
 static void media_signal(GDBusConnection *c,const char *sender,const char *path,const char *iface,const char *signal,GVariant *params,gpointer data) {
     GVariant *changed=g_variant_get_child_value(params,1);
@@ -657,6 +683,7 @@ static void bus_ready(GObject *source,GAsyncResult *result,gpointer data) {
     bus=g_bus_get_finish(result,&e);
     if(bus) {
         g_dbus_connection_signal_subscribe(bus,NULL,"org.freedesktop.DBus.Properties","PropertiesChanged","/org/mpris/MediaPlayer2",NULL,G_DBUS_SIGNAL_FLAGS_NONE,media_signal,NULL,NULL);
+        g_dbus_connection_signal_subscribe(bus,NULL,"org.mpris.MediaPlayer2.Player","Seeked","/org/mpris/MediaPlayer2",NULL,G_DBUS_SIGNAL_FLAGS_NONE,media_seeked,NULL,NULL);
         media_update(NULL);
         phone_update(NULL);
     }
@@ -754,48 +781,6 @@ static gboolean connect_pulse(gpointer unused) {
     pa_context_connect(pulse,NULL,PA_CONTEXT_NOAUTOSPAWN,NULL);
     return G_SOURCE_CONTINUE;
 }
-static gboolean kill_invest(gpointer unused) {
-    invest_timeout=0;
-    if(invest_process)g_subprocess_force_exit(invest_process);
-    return G_SOURCE_REMOVE;
-}
-static void invest_result(GObject *source,GAsyncResult *result,gpointer unused) {
-    char *out=NULL,*err=NULL;
-    GError *e=NULL;
-    gboolean ok=g_subprocess_communicate_utf8_finish(G_SUBPROCESS(source),result,&out,&err,&e);
-    if(invest_timeout) {
-        g_source_remove(invest_timeout);
-        invest_timeout=0;
-    }
-    if(ok&&g_subprocess_get_successful(G_SUBPROCESS(source))&&out&&*out) {
-        g_strstrip(out);
-        for(char *p=out;*p;p++)if(*p=='\n'||*p=='\r')*p=' ';
-        set_text(invest_label,out);
-    }
-    else set_text(invest_label,"Invest unavailable");
-    g_free(out);
-    g_free(err);
-    g_clear_error(&e);
-    g_clear_object(&invest_process);
-    invest_busy=FALSE;
-}
-static gboolean invest_update(gpointer unused) {
-    if(!enable_invest||invest_busy||stopping||!g_getenv("SIMPLEPANEL_INVEST_COMMAND"))return G_SOURCE_CONTINUE;
-    char *script=g_getenv("SIMPLEPANEL_INVEST_COMMAND")?g_strdup(g_getenv("SIMPLEPANEL_INVEST_COMMAND")):simple_control("simple-invest","mango/scripts/invest.sh");
-    GError *e=NULL;
-    invest_process=g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_PIPE|G_SUBPROCESS_FLAGS_STDERR_PIPE,&e,script,NULL);
-    g_free(script);
-    if(invest_process) {
-        invest_busy=TRUE;
-        invest_timeout=g_timeout_add_seconds(10,kill_invest,NULL);
-        g_subprocess_communicate_utf8_async(invest_process,NULL,cancel,invest_result,NULL);
-    }
-    else set_text(invest_label,"Invest unavailable");
-    g_clear_error(&e);
-    return G_SOURCE_CONTINUE;
-}
-/* GTK4 has no replacement for named palette lookup yet. Keep the
-   compatibility API isolated here; failed lookups fall back to widget text. */
 G_GNUC_BEGIN_IGNORE_DEPRECATIONS
 static void theme_color(GtkWidget *widget,const char *name,GdkRGBA *color) {
     gtk_widget_get_color(widget,color);
@@ -905,7 +890,7 @@ static void activate(GtkApplication *application,gpointer unused) {
         monitor_name=g_strdup(gdk_monitor_get_connector(monitor));
     }
     window=gtk_application_window_new(application);
-    gtk_window_set_title(GTK_WINDOW(window),"Simplepanel preview");
+    gtk_window_set_title(GTK_WINDOW(window),"Simplepanel");
     gtk_widget_add_css_class(window,"simplepanel");
     gtk_window_set_default_size(GTK_WINDOW(window),preview?1400:1,height);
     /* Layer-shell must accept the compositor's full-width allocation. */
@@ -939,8 +924,6 @@ static void activate(GtkApplication *application,gpointer unused) {
     gtk_center_box_set_end_widget(GTK_CENTER_BOX(layout),right);
     tags=box(2);
     title_label=label("Mango…",28);
-    gtk_box_append(GTK_BOX(left),tags);
-    gtk_box_append(GTK_BOX(left),title_label);
     visualizer=gtk_drawing_area_new();
     gtk_widget_set_size_request(visualizer,90,height-4);
     gtk_widget_set_valign(visualizer,GTK_ALIGN_CENTER);
@@ -960,9 +943,15 @@ static void activate(GtkApplication *application,gpointer unused) {
     gtk_widget_add_controller(music,music_motion);
     gtk_widget_set_tooltip_text(music,"Open media dashboard (Super+Ctrl+N)");
     gtk_box_append(GTK_BOX(music),visualizer);
-    gtk_box_append(GTK_BOX(music),media_label);
-    gtk_box_append(GTK_BOX(center),music);
-    gtk_box_append(GTK_BOX(center),clock_label);
+    GtkWidget *media_stack=gtk_box_new(GTK_ORIENTATION_VERTICAL,2);
+    gtk_widget_set_valign(media_stack,GTK_ALIGN_CENTER);
+    media_progress=gtk_progress_bar_new();
+    gtk_widget_add_css_class(media_progress,"song-progress");
+    gtk_widget_set_visible(media_progress,FALSE);
+    gtk_widget_set_can_target(media_progress,FALSE);
+    gtk_box_append(GTK_BOX(media_stack),media_label);
+    gtk_box_append(GTK_BOX(media_stack),media_progress);
+    gtk_box_append(GTK_BOX(music),media_stack);
     gtk_widget_set_visible(clock_label,dashboard_settings.show_panel_clock);
     net_label=label("Network…",28);
     volume_label=label("Audio…",15);
@@ -980,20 +969,17 @@ static void activate(GtkApplication *application,gpointer unused) {
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(volume_click),GDK_BUTTON_MIDDLE);
     g_signal_connect(volume_click,"pressed",G_CALLBACK(volume_middle),NULL);
     gtk_widget_add_controller(volume_label,GTK_EVENT_CONTROLLER(volume_click));
-    invest_label=label("Invest…",24);
-    clickable(right,G_CALLBACK(system_clicked));
-    gtk_widget_set_tooltip_text(right,"System information dashboard");
-    gtk_widget_set_tooltip_text(invest_label,"World clock & system dashboard");
     battery_label=label("",30);
     gtk_widget_set_visible(battery_label,FALSE);
     phone_label=label("Phone…",18);
-    gtk_box_append(GTK_BOX(right),net_label);
-    gtk_box_append(GTK_BOX(right),volume_label);
-    gtk_box_append(GTK_BOX(right),invest_label);
-    gtk_box_append(GTK_BOX(right),battery_label);
-    gtk_box_append(GTK_BOX(right),phone_label);
-    gtk_widget_set_visible(invest_label,enable_invest);
     gtk_widget_set_visible(phone_label,enable_phone);
+    clickable(net_label,G_CALLBACK(system_clicked));
+    clickable(battery_label,G_CALLBACK(system_clicked));
+    clickable(phone_label,G_CALLBACK(system_clicked));
+    GtkWidget *sections[]={left,center,right};
+    const char *names[]={"workspaces","window-title","music","clock","network","volume","battery","phone"};
+    GtkWidget *widgets[]={tags,title_label,music,clock_label,net_label,volume_label,battery_label,phone_label};
+    panel_modules_layout(sections,names,widgets,G_N_ELEMENTS(widgets),demo,G_CALLBACK(system_clicked));
     GtkCssProvider *provider=gtk_css_provider_new();
     char opacity[G_ASCII_DTOSTR_BUF_SIZE];
     g_ascii_dtostr(opacity,sizeof opacity,background_opacity);
@@ -1011,6 +997,10 @@ static void activate(GtkApplication *application,gpointer unused) {
     gtk_css_provider_load_from_string(provider,styled);
     g_free(styled);
     gtk_style_context_add_provider_for_display(display,GTK_STYLE_PROVIDER(provider),GTK_STYLE_PROVIDER_PRIORITY_APPLICATION+1);
+    g_object_unref(provider);
+    provider=gtk_css_provider_new();
+    gtk_css_provider_load_from_string(provider,".song-progress {padding:0;margin:0;min-height:0;} .song-progress trough {min-height:2px;min-width:0;padding:0;border:0;border-radius:2px;background:alpha(@simple_fg,.18);} .song-progress progress {min-height:2px;min-width:0;margin:0;padding:0;border:0;border-radius:2px;background:#e99a38;}");
+    gtk_style_context_add_provider_for_display(display,GTK_STYLE_PROVIDER(provider),GTK_STYLE_PROVIDER_PRIORITY_USER+2);
     g_object_unref(provider);
     GtkEventController *keys=gtk_event_controller_key_new();
     g_signal_connect(keys,"key-pressed",G_CALLBACK(key_pressed),NULL);
@@ -1048,7 +1038,8 @@ static void activate(GtkApplication *application,gpointer unused) {
     g_object_unref(monitor);
     gtk_window_present(GTK_WINDOW(window));
     tick(NULL);
-    g_timeout_add_seconds(1,tick,NULL);
+    if(panel_module_enabled("clock")||panel_module_enabled("network"))g_timeout_add_seconds(1,tick,NULL);
+    if(panel_module_enabled("music"))g_timeout_add(250,media_progress_tick,NULL);
     if(demo) {
         json_object *o=json_tokener_parse("{\"all_tags\":[{\"monitor\":\"demo\",\"tags\":[{\"index\":1,\"client_count\":1},{\"index\":2,\"is_active\":true},{\"index\":8,\"client_count\":1}]}]}");
         g_free(monitor_name);
@@ -1056,42 +1047,52 @@ static void activate(GtkApplication *application,gpointer unused) {
         update_tags(o);
         json_object_put(o);
         set_text(title_label,"kitty · Yazi");
-        set_text(media_label,"▶ Artist — Now playing");
+        set_text(media_label,"▶ Artist — Album — Now playing");
+        media_current=(MediaProgress){.position=75000000,.length=240000000,
+            .sampled=g_get_monotonic_time(),.rate=1.0,.playing=TRUE};
+        media_progress_tick(NULL);
         set_text(net_label,"↓ 128 KiB/s  ↑ 12 KiB/s");
         display_volume(45,FALSE);
-        set_text(invest_label,"145000 3200000");
         set_text(phone_label,"Phone 82% ⚡↑");
         for(int i=0;i<9;i++)bars[i]=.2+.075*i;
         gtk_widget_queue_draw(visualizer);
     }
     else {
-        battery_update(NULL);
-        g_timeout_add_seconds(15,battery_update,NULL);
-        connect_feeds(NULL);
-        g_timeout_add_seconds(5,connect_feeds,NULL);
-        pulse_loop=pa_glib_mainloop_new(NULL);
-        connect_pulse(NULL);
-        g_timeout_add_seconds(5,connect_pulse,NULL);
-        g_bus_get(G_BUS_TYPE_SESSION,cancel,bus_ready,NULL);
-        g_timeout_add_seconds(5,media_update,NULL);
-        g_timeout_add_seconds(30,phone_update,NULL);
-        invest_update(NULL);
-        g_timeout_add_seconds(3600,invest_update,NULL);
-        char *dir=g_build_filename(g_get_user_runtime_dir(),"simplepanel",NULL);
-        g_mkdir_with_parents(dir,0700);
-        cava_path=g_build_filename(dir,"cava.conf",NULL);
-        g_free(dir);
-        g_file_set_contents(cava_path,"[general]\nbars=9\nframerate=12\n[input]\nmethod=pulse\nsource=auto\n[output]\nchannels=mono\nmethod=raw\nraw_target=/dev/stdout\ndata_format=ascii\nascii_max_range=100\nbar_delimiter=59\nframe_delimiter=10\n",-1,NULL);
-        start_cava(NULL);
-        g_timeout_add_seconds(30,start_cava,NULL);
+        panel_modules_start();
+        if(panel_module_enabled("battery")) {
+            battery_update(NULL);
+            g_timeout_add_seconds(15,battery_update,NULL);
+        }
+        if(!strcmp(panel_environment(),"mango")&&(panel_module_enabled("workspaces")||panel_module_enabled("window-title"))) {
+            connect_feeds(NULL);
+            g_timeout_add_seconds(5,connect_feeds,NULL);
+        }
+        if(panel_module_enabled("volume")||enable_osd) {
+            pulse_loop=pa_glib_mainloop_new(NULL);
+            connect_pulse(NULL);
+            g_timeout_add_seconds(5,connect_pulse,NULL);
+        }
+        if(panel_module_enabled("music")||enable_phone)g_bus_get(G_BUS_TYPE_SESSION,cancel,bus_ready,NULL);
+        if(panel_module_enabled("music"))g_timeout_add_seconds(5,media_update,NULL);
+        if(enable_phone)g_timeout_add_seconds(30,phone_update,NULL);
+        if(enable_cava) {
+            char *dir=g_build_filename(g_get_user_runtime_dir(),"simplepanel",NULL);
+            g_mkdir_with_parents(dir,0700);
+            cava_path=g_build_filename(dir,"cava.conf",NULL);
+            g_free(dir);
+            g_file_set_contents(cava_path,"[general]\nbars=9\nframerate=12\n[input]\nmethod=pulse\nsource=auto\n[output]\nchannels=mono\nmethod=raw\nraw_target=/dev/stdout\ndata_format=ascii\nascii_max_range=100\nbar_delimiter=59\nframe_delimiter=10\n",-1,NULL);
+            start_cava(NULL);
+            g_timeout_add_seconds(30,start_cava,NULL);
+        }
     }
     if(duration>0)g_timeout_add_seconds(duration,stop_app,NULL);
 }
 int system_dashboard_main(int duration);
 int main(int argc,char **argv) {
     char *path=NULL;
-    gboolean check=FALSE,system_dashboard=FALSE;
+    gboolean check=FALSE,system_dashboard=FALSE,market_summary=FALSE;
     GOptionEntry options[]= {
+        {"market-summary",0,0,G_OPTION_ARG_NONE,&market_summary,"Print configured market prices for a custom module",NULL},
         {"system-dashboard",0,0,G_OPTION_ARG_NONE,&system_dashboard,"World clock and system information",NULL},
         {
             "preview-layer",0,0,G_OPTION_ARG_NONE,&preview_layer,"Temporary bottom bar, no reserved space",NULL
@@ -1109,7 +1110,7 @@ int main(int argc,char **argv) {
             NULL
         }
     };
-    GOptionContext *context=g_option_context_new("— small fixed-layout Mango panel");
+    GOptionContext *context=g_option_context_new("— small configurable status panel");
     g_option_context_add_main_entries(context,options,NULL);
     GError *error=NULL;
     if(!g_option_context_parse(context,&argc,&argv,&error)) {
@@ -1119,6 +1120,7 @@ int main(int argc,char **argv) {
     g_option_context_free(context);
 
     config=g_key_file_new();
+    if(!path&&g_getenv("SIMPLEPANEL_CONFIG"))path=g_strdup(g_getenv("SIMPLEPANEL_CONFIG"));
     if(!path)path=g_build_filename(g_get_user_config_dir(),"simplepanel/config.ini",NULL);
     if(g_file_test(path,G_FILE_TEST_EXISTS)&&!g_key_file_load_from_file(config,path,G_KEY_FILE_NONE,&error)) {
         g_printerr("%s\n",error->message);
@@ -1126,13 +1128,15 @@ int main(int argc,char **argv) {
     }
     config_path=g_canonicalize_filename(path,NULL);
     if(!dashboard_settings_load(config,&error)){g_printerr("Invalid config: %s\n",error->message);g_clear_error(&error);return 2;}
+    if(!panel_modules_load(config,config_path,&error)) {
+        g_printerr("Invalid panel config: %s\n",error->message);g_clear_error(&error);return 2;
+    }
     panel_timezone=*dashboard_settings.panel_zone?g_time_zone_new_identifier(dashboard_settings.panel_zone):g_time_zone_new_local();
     monitor_name=setting("monitor","");
     clock_format=setting("clock_format","%a %d  %H:%M");
     interface_name=setting("interface","");
-    enable_cava=flag("cava",TRUE);
-    enable_invest=flag("invest",TRUE);
-    enable_phone=flag("phone",TRUE);
+    enable_cava=flag("cava",TRUE)&&panel_module_enabled("music");
+    enable_phone=flag("phone",TRUE)&&panel_module_enabled("phone");
     enable_osd=flag("volume_osd",FALSE);
     if(g_key_file_has_key(config,"panel","height",NULL))height=g_key_file_get_integer(config,"panel","height",NULL);
     if(g_key_file_has_key(config,"panel","top_margin",NULL))top_margin=g_key_file_get_integer(config,"panel","top_margin",NULL);
@@ -1157,6 +1161,20 @@ int main(int argc,char **argv) {
         g_print("Config and parser checks passed. GTK/layer-shell/Pulse/GIO linked; no services contacted.\n");
         return 0;
     }
+    if(market_summary) {
+        simple_market_refresh();
+        gint64 deadline=g_get_monotonic_time()+7*G_USEC_PER_SEC;
+        while(simple_market_pending()&&g_get_monotonic_time()<deadline) {
+            while(g_main_context_iteration(NULL,FALSE));
+            g_usleep(10000);
+        }
+        simple_market_stop();
+        json_object *prices=simple_market_read();
+        for(gsize i=0;i<dashboard_settings.markets;i++) {
+            char *price=simple_market_number(prices,i);g_print("%s%s",i?" ":"",price);g_free(price);
+        }
+        g_print("\n");if(prices)json_object_put(prices);return 0;
+    }
     if(system_dashboard)return system_dashboard_main(duration);
     if(demo||preview_layer) {
         preview=TRUE;
@@ -1170,14 +1188,11 @@ int main(int argc,char **argv) {
     int code=g_application_run(G_APPLICATION(app),0,NULL);
     stopping=TRUE;
     simple_market_stop();
+    panel_modules_stop();
     g_cancellable_cancel(cancel);
     if(cava_process) {
         g_subprocess_force_exit(cava_process);
         g_subprocess_wait(cava_process,NULL,NULL);
-    }
-    if(invest_process) {
-        g_subprocess_force_exit(invest_process);
-        g_subprocess_wait(invest_process,NULL,NULL);
     }
     if(pulse) {
         pa_context_disconnect(pulse);

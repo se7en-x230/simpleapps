@@ -11,7 +11,7 @@ import tempfile
 import tomllib
 from urllib.parse import urlsplit
 
-DEFAULTS=dict(bookmarks_file='',window_width=760,window_height=520,start_in_search=True,close_after_open=True)
+DEFAULTS=dict(bookmarks_file='',window_width=760,window_height=520,start_in_search=False,close_after_open=True)
 
 
 def settings(create=True):
@@ -31,7 +31,8 @@ def settings(create=True):
     else:
         share=Path(os.environ.get('XDG_DATA_HOME',Path.home()/'.local/share'))
         legacy=share/'simplepicker/bookmarks.json'
-        file=legacy if legacy.is_file() else share/'simplebookmarks/bookmarks.json'
+        current=share/'simplebookmarks/bookmarks.json'
+        file=current if current.is_file() or not legacy.is_file() else legacy
     if create and not path.exists():
         base.mkdir(parents=True,exist_ok=True)
         # Pin the selected file: installing/removing Picker later cannot switch lists.
@@ -137,7 +138,7 @@ def gui(cfg,store,add=False):
             super().__init__(application_id='org.simpleapps.Simplebookmarks',flags=Gio.ApplicationFlags.NON_UNIQUE)
             self.visible=[];self.dialog=None
         def do_activate(self):
-            self.win=Gtk.ApplicationWindow(application=self,title='Simplebookmarks');self.win.set_default_size(cfg['window_width'],cfg['window_height'])
+            self.win=Gtk.ApplicationWindow(application=self,title='Simplebookmarks'); attach(self.win);self.win.set_default_size(cfg['window_width'],cfg['window_height'])
             self.win.add_css_class('simplebookmarks')
             box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=10)
             for edge in ('top','bottom','start','end'):getattr(box,'set_margin_'+edge)(14)
@@ -151,12 +152,15 @@ def gui(cfg,store,add=False):
             self.status=Gtk.Label(xalign=0,wrap=True);box.append(self.status)
             self.hint=Gtk.Label(label='Ctrl↵ navigate · j/k move · ↵/l open · / search · y copy · r reload · Esc/q close',xalign=0,ellipsize=3)
             self.hint.add_css_class('keys');self.hint.set_tooltip_text(self.hint.get_text());box.append(self.hint)
-            css=Gtk.CssProvider();css.load_from_string('.simplebookmarks {background:#272625;color:#e4ded2;} .simplebookmarks .title {color:#f3a40a;font-weight:bold;} .simplebookmarks entry,.simplebookmarks button {background:#35322e;color:#e4ded2;} .simplebookmarks list {background:transparent;color:#e4ded2;} .simplebookmarks row {padding:9px;border-radius:5px;} .simplebookmarks row:selected {background:#8b0000;color:#fff5ef;} .simplebookmarks button:focus {background:#700909;outline:2px solid #d99a00;} .simplebookmarks .url {color:#b5a58d;font-size:11px;} .simplebookmarks .tag {color:#ffbd45;background:#49351d;border:1px solid #b47b22;border-radius:5px;padding:2px 8px;font-weight:bold;font-size:12px;} .simplebookmarks row:selected .tag {background:#49351d;color:#ffcf70;} .simplebookmarks .keys {font-size:11px;color:#b5a58d;}')
+            css=Gtk.CssProvider();css.load_from_string('.simplebookmarks {background:@simple_bg;color:@simple_fg;} .simplebookmarks .title {color:@simple_heading;font-weight:bold;} .simplebookmarks entry,.simplebookmarks button {background:@simple_button;color:@simple_fg;} .simplebookmarks list {background:transparent;color:@simple_fg;} .simplebookmarks row {padding:9px;border-radius:5px;} .simplebookmarks row:selected {background:@simple_selected;color:@simple_on_accent;} .simplebookmarks button:focus-visible {outline:2px solid @simple_heading;} .simplebookmarks .url {color:@simple_muted;font-size:11px;} .simplebookmarks .tag {color:@simple_attention;background:@simple_surface;border:1px solid @simple_border;border-radius:5px;padding:2px 8px;font-weight:bold;font-size:12px;} .simplebookmarks row:selected .tag {background:@simple_surface;color:@simple_attention;} .simplebookmarks .keys {font-size:11px;color:@simple_muted;}')
             Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(),css,Gtk.STYLE_PROVIDER_PRIORITY_USER+1)
             keys=Gtk.EventControllerKey();keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE);keys.connect('key-pressed',self.key);self.win.add_controller(keys)
-            self.refresh();self.win.present()
-            (self.search if cfg['start_in_search'] else self.list).grab_focus()
+            bind_search(self.win,self.search,self.list,'simplebookmarks',self.move,self.open)
+            self.refresh()
             if add:self.edit()
+            else:
+                self.win.present()
+                start_search(self.win,cfg['start_in_search'])
         def selected(self):
             row=self.list.get_selected_row();return self.visible[row.get_index()] if row else None
         def refresh(self):
@@ -196,7 +200,7 @@ def gui(cfg,store,add=False):
             except (OSError,ValueError) as exc:self.status.set_text(str(exc))
         def dialog_window(self,title):
             if self.dialog:self.dialog.present();return None,None
-            win=Gtk.Window(title=title,transient_for=self.win,modal=True);win.add_css_class('simplebookmarks');win.set_default_size(520,200)
+            win=Gtk.Window(application=self,title=title,transient_for=None if add else self.win,modal=not add);attach(win);win.add_css_class('simplebookmarks');win.set_default_size(520,-1);win.set_resizable(False)
             self.dialog=win;box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=10)
             for edge in ('top','bottom','start','end'):getattr(box,'set_margin_'+edge)(14)
             win.set_child(box);heading=Gtk.Label(label=title,xalign=0);heading.add_css_class('title');box.append(heading)
@@ -204,16 +208,24 @@ def gui(cfg,store,add=False):
         def close_dialog(self):
             win=self.dialog;self.dialog=None
             if win:win.destroy()
-            self.list.grab_focus();return True
+            if add:
+                self.win.destroy();self.quit()
+            else:self.list.grab_focus()
+            return True
         def dialog_keys(self,win,widgets,accept,delete=False):
             def key(_,value,code,state):
                 name=Gdk.keyval_name(value);ctrl=bool(state&Gdk.ModifierType.CONTROL_MASK)
                 if name=='Escape' or delete and name in ('n','q'):self.close_dialog();return True
-                if delete and name=='y' or ctrl and name in ('Return','KP_Enter','s'):accept();return True
+                if delete and name=='y' or ctrl and name=='s':accept();return True
                 if name in ('Tab','ISO_Left_Tab') or delete and name in ('h','j','k','l','Left','Right'):
                     focus=win.get_focus();index=next((i for i,w in enumerate(widgets) if focus==w or focus and focus.is_ancestor(w)),0)
                     backwards=name in ('ISO_Left_Tab','h','k','Left') or bool(state&Gdk.ModifierType.SHIFT_MASK)
                     widgets[(index+(-1 if backwards else 1))%len(widgets)].grab_focus();return True
+                if name in ('Return','KP_Enter') and not ctrl and not delete:
+                    focus=win.get_focus()
+                    if focus==widgets[-2]:self.close_dialog()
+                    else:accept()
+                    return True
                 if delete and name in ('Return','KP_Enter','space'):
                     if win.get_focus()==widgets[-1]:accept()
                     else:self.close_dialog()
@@ -223,18 +235,21 @@ def gui(cfg,store,add=False):
         def edit(self,index=None):
             win,box=self.dialog_window('Add bookmark' if index is None else 'Edit bookmark')
             if not win:return
-            label=Gtk.Entry(placeholder_text='Name');url=Gtk.Entry(placeholder_text='https://…')
-            for text,entry in [('Name',label),('URL',url)]:box.append(Gtk.Label(label=text,xalign=0));box.append(entry)
-            if index is not None:label.set_text(store.records[index]['label']);url.set_text(store.records[index]['url'])
+            label=Gtk.Entry(placeholder_text='Name');url=Gtk.Entry(placeholder_text='https://…');tag=Gtk.Entry(placeholder_text='Optional tag')
+            for text,entry in [('Name',label),('URL',url),('Tag',tag)]:box.append(Gtk.Label(label=text,xalign=0));box.append(entry)
+            if index is not None:label.set_text(store.records[index]['label']);url.set_text(store.records[index]['url']);tag.set_text(category(store.records[index]))
             error=Gtk.Label(xalign=0,wrap=True);box.append(error);buttons=Gtk.Box(spacing=8,halign=Gtk.Align.END);box.append(buttons)
-            cancel=Gtk.Button(label='Cancel [Esc]');save=Gtk.Button(label='Save [Ctrl+Enter]');buttons.append(cancel);buttons.append(save)
+            cancel=Gtk.Button(label='Cancel [Esc]');save=Gtk.Button(label='Save [Ctrl+S]');buttons.append(cancel);buttons.append(save)
             def commit():
                 record=(dict(store.records[index]) if index is not None else {})|{'label':label.get_text().strip(),'url':url.get_text().strip()}
+                if tag.get_text().strip():record['category']=tag.get_text().strip()
+                else:record.pop('category',None)
                 try:store.change(index,record);self.close_dialog();self.refresh()
                 except (OSError,ValueError,IndexError) as exc:error.set_text(str(exc))
             cancel.connect('clicked',lambda _:self.close_dialog());save.connect('clicked',lambda _:commit())
-            self.dialog_keys(win,[label,url,cancel,save],commit);win.present();label.grab_focus()
+            self.dialog_keys(win,[label,url,tag,cancel,save],commit);win.present();label.grab_focus()
             self.edit_fields=(label,url,error)
+            self.edit_tag=tag
             if index is None:
                 def clipboard(clip,result):
                     try:text=clip.read_text_finish(result)
@@ -296,6 +311,7 @@ for _keyboard_root in (_KeyboardPath(__file__).resolve().parent.parent / 'simple
         _keyboard_sys.path.insert(0, str(_keyboard_root))
         break
 from simple_keyboard import control_key
+from simple_ui import attach, bind_search, start_search
 
 
 def main():

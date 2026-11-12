@@ -4,8 +4,8 @@ title = "Simpleclip"
 heading = true
 width = 1000
 height = 650
-start_in_search = true
-escape_closes = true
+start_in_search = false
+escape_closes = false
 
 [ui]
 layer_shell = "auto"

@@ -35,3 +35,31 @@ New accounts use `$XDG_CONFIG_HOME/simplewallpaper/config.json`, `$XDG_DATA_HOME
 The app publishes the selected desktop image as `$XDG_DATA_HOME/simplewallpaper/current`. Consumers only read that file. They do not import the wallpaper app, start its worker or require a renderer.
 
 Shared `simple/images.ini` controls fallback/profile artwork. Removing Simplewallpaper must retain personal configuration/data unless explicitly requested, and must not remove shared Simple image resources.
+
+## Shared base and portable installation
+
+This backend has no GTK window. Its optional menu uses Simplepicker and the shared C base; terminal operation stays independent.
+
+Requires Linux and Python 3.11+ for the source installer. Install dependencies using your distribution’s package manager; package names can differ.
+
+- Libraries / pkg-config modules: none.
+- Python imports: none beyond the standard library for the base app.
+- Required commands: `python3`, `awww`, `awww-daemon`, `magick`.
+- Optional Generated daylight wallpaper packs: see feature configuration.
+- Desktop requirements: Wayland layer-shell (not the Plasma desktop wallpaper).
+
+From the suite checkout (no pacman or distro detection on this path):
+
+```sh
+./install --dependencies simplewallpaper
+./install --check simplewallpaper
+./install --no-packages --install simplewallpaper
+```
+
+To build a relocatable staging tree without changing your installation:
+
+```sh
+./install --install simplewallpaper --stage "$PWD/package-simplewallpaper"
+```
+
+Keep `simple-common` alongside the app sources. Staged files are under `.local/`; move that prefix as a unit so executables, shared libraries and resources stay together. Individual C Makefiles also accept `PREFIX`/`DESTDIR` where documented. See [portable builds](../docs/portability.md) for Debian/Arch dependency examples and limitations.

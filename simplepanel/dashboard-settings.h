@@ -18,3 +18,5 @@ char *simple_market_price(json_object *prices,int index);
 char *simple_market_number(json_object *prices,int index);
 void simple_market_stop(void);
 #endif
+
+gboolean simple_market_pending(void);

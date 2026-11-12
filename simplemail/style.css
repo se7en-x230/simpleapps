@@ -12,10 +12,24 @@ window.simplemail { background:@simple_bg;color:@simple_fg; }
 .simplemail image { color:@simple_accent; }
 
     .simplemail-inbox .simplemail-subject { border: none; padding: 5px; }
-    .simplemail-inbox .simplemail-selected { background-color: rgba(255, 255, 255, 0.10); }
+    .simplemail-inbox .simplemail-selected { background-color: @simple_selected; }
     .simplemail-inbox .simplemail-read .simplemail-subject { color: @simple_bright; font-weight: bold; }
     .simplemail-inbox .simplemail-replied .simplemail-subject { color: @theme_fg_color; font-weight: normal; }
     .simplemail-inbox .simplemail-unread .simplemail-subject { color: @simple_attention; font-weight: bold; }
     .simplemail-inbox .simplemail-unread .simplemail-sender { opacity: 1; font-weight: bold; }
 
     .simplemail-inbox .simplemail-account-bar { min-width: 4px; border-radius: 2px; }
+
+/* Orange actions, with neutral account selectors. */
+window.simplemail button,
+window.simplemail button:hover,
+window.simplemail button.suggested-action {
+    background: @simple_heading; background-image: none;
+    color: @simple_bg; border-color: @simple_heading;
+}
+window.simplemail button label,
+window.simplemail button:hover label { color: @simple_bg; }
+window.simplemail dropdown button,
+window.simplemail dropdown button:hover { background: @simple_button; color: @simple_fg; border-color: @simple_border; }
+window.simplemail dropdown button label,
+window.simplemail dropdown button:hover label { color: @simple_fg; }

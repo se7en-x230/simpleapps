@@ -25,6 +25,8 @@ def patched(win):
     widget=app.win.get_focus()
     while widget and widget is not app.search: widget=widget.get_parent()
     assert widget is app.search, 'Search must be focused on startup'
+    app.key(None,Gdk.KEY_Return,0,Gdk.ModifierType.CONTROL_MASK)
+    key(Gdk.KEY_slash)
     app.search.set_text('cobalt');assert app.path.name=='Read later.md'
     app.search.set_text('');app.search.emit('activate');app.move()
     assert app.path.name=='Ideas.md';key(Gdk.KEY_j);assert app.path.name=='Weekend.md'

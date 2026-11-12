@@ -15,3 +15,6 @@ clean:
 .PHONY: all install clean
 
 simplemail-native: ../simple-common/simple-keyboard.h
+
+SIMPLE_UI_TARGETS = simplemail-native
+include ../simple-common/framework.mk

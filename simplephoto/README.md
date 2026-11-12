@@ -58,3 +58,30 @@ The main view has two rows of five sliders: eight tone/colour controls, blur amo
 `c` opens a dedicated fullscreen crop view with the adjustments hidden. It shows crop dimensions, Done and Full image buttons, and one crop-specific key-help line. `h/j/k/l` move, Shift resizes, `f` toggles fast steps, Ctrl gives pixel precision, and Enter/Escape returns to adjustments. Each mode displays its own relevant key hints.
 
 Rotation and mirror shortcuts are listed in the bottom key guide. Crops, painted blur masks and mask-undo history follow each transform. Comparison (`v`) shows the original untransformed photo. Saving combines transforms and edits into a separate numbered copy.
+
+## Shared base and portable installation
+
+Uses the shared C/GTK4 base in `simple-common`. Python UI code calls the same native library through a thin adapter. Shared theme and keyboard adapters replace separate implementations; app-specific commands and content remain local.
+
+Requires Linux and Python 3.11+ for the source installer. Building the shared base requires a C compiler, make, pkg-config and GTK4 >= 4.12 development files. Install dependencies using your distribution’s package manager; package names can differ.
+
+- Libraries / pkg-config modules: `gtk4 >= 4.12`.
+- Python imports: `gi`, `cairo`, `PIL`, `numpy`.
+- Required commands: `python3`, `cc`, `make`, `pkg-config`.
+- Desktop requirements: GTK desktop; local SDR editing.
+
+From the suite checkout (no pacman or distro detection on this path):
+
+```sh
+./install --dependencies simplephoto
+./install --check simplephoto
+./install --no-packages --install simplephoto
+```
+
+To build a relocatable staging tree without changing your installation:
+
+```sh
+./install --install simplephoto --stage "$PWD/package-simplephoto"
+```
+
+Keep `simple-common` alongside the app sources. Staged files are under `.local/`; move that prefix as a unit so executables, shared libraries and resources stay together. Individual C Makefiles also accept `PREFIX`/`DESTDIR` where documented. See [portable builds](../docs/portability.md) for Debian/Arch dependency examples and limitations.

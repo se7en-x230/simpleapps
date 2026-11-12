@@ -1,6 +1,6 @@
 # Simpleinstaller
 
-Install individual Simple apps on Arch-based Linux, keeping your current desktop and personal settings. Run as your normal user. Python 3, a terminal and pacman are needed; builds use distribution packages rather than Newinit or pip.
+Install individual Simple apps on Linux, keeping your current desktop and personal settings. Run as your normal user with Python 3.11 or newer. Automatic package installation supports Arch/Artix through pacman. On Debian 13 and other distributions, install dependencies with your package manager, then use `--no-packages`; see the [Linux installation and source-build guide](../docs/portability.md). Builds use native libraries and distribution Python packages rather than Newinit or pip.
 
 ## Start
 
@@ -35,6 +35,7 @@ Review packages and compatibility before continuing. If packages are missing, th
 | Simplecalendar | Calendar, recurrence, CalDAV sync | Connect your own account. Google support is optional; it needs your Desktop OAuth client. |
 | Simplecontacts | Google Contacts and offline snapshot | Connect with your own Google Desktop OAuth client. |
 | Simplemail | IMAP/SMTP frontend and account setup | Run `simplemail --setup`. Optional KeePassXC integration is not activated automatically. |
+| Simpletag | Picard frontend and Simplefiles folder chooser | Requires Picard 3. Run `simpletag --setup` with Picard closed to enable the local bridge; Picard retains tagging settings. |
 | Simpletorrent | Transmission frontend and backend package | Start/configure your local daemon separately. Password-authenticated RPC is not supported yet. |
 | Simplewallpaper | Static or sunrise-aware wallpaper | Wayland layer-shell; not Plasma wallpaper. Generated packs are optional; configure location first. |
 | Simplepanel | Status panel and system dashboard | The menu entry opens the normal GTK dashboard. The panel needs Wayland layer-shell; workspace/title controls need Mango. Install Simple tools for detail controls. |

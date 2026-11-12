@@ -43,7 +43,7 @@ class Tests(unittest.TestCase):
  def test_shared_ownership_from_recipes(self):
   with tempfile.TemporaryDirectory() as td:
    root=Path(td);work=root/'work';work.mkdir();stage=root/'stage';stage.mkdir()
-   owners=installer.stage_apps(BASE/'sources',['simplewallpaper'],set(),stage,work)
+   owners=installer.stage_apps((BASE/'sources' if (BASE/'sources').is_dir() else BASE.parent),['simplewallpaper'],set(),stage,work)
    self.assertEqual(owners[stage/'.local/bin/simplewallpaper'],{'simplewallpaper'})
    self.assertEqual(owners[stage/'.local/bin/simple-open'],{'simplewallpaper'})
 if __name__=='__main__':unittest.main()

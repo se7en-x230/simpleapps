@@ -8,7 +8,7 @@ Show a desktop status panel or open the system dashboard. The panel includes des
 
 ### System dashboard
 
-![Simplepanel system dashboard with Lisbon clock](screenshots/simplepanel.png)
+![Simplepanel system dashboard with world clocks and time converter](screenshots/simplepanel.png)
 
 Screenshot captured in an isolated profile; no personal accounts are connected.
 

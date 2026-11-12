@@ -88,6 +88,8 @@ void row_free(gpointer p) {
 Menu *menu_new(const char *title, const char *prompt) {
   Menu *m = g_new0(Menu, 1);
   m->benchmark = sp_benchmark;
+  m->start_in_search = FALSE;
+  m->escape_closes = FALSE;
   m->title = title;
   m->prompt = prompt;
   m->icon = "view-list-symbolic";
@@ -474,7 +476,15 @@ static void vim_search_mode(Menu *m, gboolean search) {
   gtk_editable_set_editable(GTK_EDITABLE(m->entry), search);
   gtk_entry_set_placeholder_text(GTK_ENTRY(m->entry), search
       ? (m->escape_closes ? "Search · Ctrl+Enter navigation · Esc close" : "Search · Esc returns to navigation") : "/ Search · j/k Move · h Back · l Open");
-  gtk_widget_grab_focus(m->entry);
+  gtk_widget_set_visible(m->entry,search);
+  gtk_widget_grab_focus(search?m->entry:m->list);
+}
+static void search_action(SimpleUISearchAction action,gpointer data) {
+  Menu *m=data;
+  if(action==SIMPLE_UI_SEARCH_DOWN||action==SIMPLE_UI_SEARCH_UP)move(m,action==SIMPLE_UI_SEARCH_DOWN?1:-1);
+  else if(action==SIMPLE_UI_SEARCH_ACTIVATE)activate(m,"enter");
+  else if(action==SIMPLE_UI_SEARCH_NAVIGATE)vim_search_mode(m,FALSE);
+  else if(action==SIMPLE_UI_SEARCH_FOCUS)vim_search_mode(m,TRUE);
 }
 static gboolean key(GtkEventControllerKey *c, guint k, guint code,
                     GdkModifierType mods, gpointer data) {
@@ -497,7 +507,7 @@ static gboolean key(GtkEventControllerKey *c, guint k, guint code,
     }
     if (!m->vim_search) {
       if (plain && (k == GDK_KEY_slash || k == GDK_KEY_i)) {
-        vim_search_mode(m, TRUE);
+        simple_ui_search_set(GTK_WINDOW(m->window),TRUE);
         return TRUE;
       }
       if (plain && k == GDK_KEY_q) { menu_finish(m, NULL); return TRUE; }
@@ -577,6 +587,28 @@ static void bench_paint(GdkFrameClock *c, gpointer data) {
   g_printerr("BENCH first_us=%" G_GINT64_FORMAT "\n", g_get_monotonic_time());
   g_idle_add(bench_close, m);
 }
+static GtkWidget *shortcut_bar(Menu *m) {
+  GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+  gtk_widget_add_css_class(bar, "simple-action-bar");
+  json_object_object_foreach(m->shortcuts, k, v) {
+    char *label;
+    if (g_key_file_has_key(m->navigation, "navigation", k, NULL)) {
+      char *binding = navigation_label(m->navigation, k);
+      label = g_strdup_printf("%s · %s", js(v), binding);
+      g_free(binding);
+    } else {
+      label = g_strdup_printf("%s · Ctrl+%c", js(v), g_ascii_toupper(*k));
+    }
+    GtkWidget *button = gtk_button_new_with_label(label);
+    g_free(label);
+    gtk_widget_add_css_class(button, "item-subtext");
+    g_object_set_data_full(G_OBJECT(button), "key", g_strdup(k), g_free);
+    g_signal_connect(button, "clicked", G_CALLBACK(shortcut_clicked), m);
+    gtk_box_append(GTK_BOX(bar), button);
+  }
+  return bar;
+}
+
 char *menu_show(Menu *m) {
   g_setenv("GDK_BACKEND", "wayland", TRUE);
   if (!gtk_init_check()) {
@@ -592,10 +624,16 @@ char *menu_show(Menu *m) {
   m->navigation = navigation_load(m->key_scope ? m->key_scope : keys_scope,
       m->keys_path ? m->keys_path : keys_override);
   if (last_error) return NULL;
+  if(g_key_file_has_key(m->navigation,"interaction","escape_closes",NULL))
+    m->escape_closes=g_key_file_get_boolean(m->navigation,"interaction","escape_closes",NULL);
+  /* keys.ini overrides provider-specific preferences. Defaults live in the base. */
+  if(!g_key_file_has_key(m->navigation,"interaction","escape_closes",NULL))
+    g_key_file_set_boolean(m->navigation,"interaction","escape_closes",m->escape_closes);
   m->vim_navigation = !m->input && !m->password && g_key_file_get_boolean(m->navigation,"interaction","vim_navigation",NULL);
   m->closed = FALSE;
   m->loop = g_main_loop_new(NULL, FALSE);
   m->window = gtk_window_new();
+  simple_ui_window(GTK_WINDOW(m->window));
   g_object_set_data(G_OBJECT(m->window), "sp-menu", m);
   gtk_window_set_title(GTK_WINDOW(m->window),
                        m->title ? m->title : "Simplepicker C");
@@ -614,7 +652,7 @@ char *menu_show(Menu *m) {
     gtk_layer_set_exclusive_zone(GTK_WINDOW(m->window), -1);
   } else
     gtk_window_set_default_size(GTK_WINDOW(m->window), m->width + 80,
-                                m->height + 80);
+                                m->previews ? m->height + 80 : -1);
   GtkCssProvider *base = gtk_css_provider_new(), *css = gtk_css_provider_new();
   gtk_css_provider_load_from_string(
       base, "window.simplepicker-layer {background:transparent;} .simplepicker "
@@ -643,22 +681,27 @@ char *menu_show(Menu *m) {
   gtk_widget_add_css_class(m->panel, "background");
   gtk_widget_add_css_class(m->panel, "box-wrapper");
   gtk_widget_set_size_request(m->panel, MAX(240, m->width),
-                              m->input ? 80 : MAX(100, m->height));
+                              m->input ? 80 : (m->previews ? MAX(100, m->height) : -1));
   gtk_widget_set_margin_start(m->panel, 40);
   gtk_widget_set_margin_end(m->panel, 40);
   gtk_widget_set_margin_top(m->panel, 40);
   gtk_widget_set_margin_bottom(m->panel, 40);
   gtk_box_append(GTK_BOX(m->outer), m->panel);
-  if (m->heading) {
-    GtkWidget *heading=gtk_label_new(m->heading);
+  if (m->heading || (g_strcmp0(m->title,"Web search") && g_strcmp0(keys_scope,"clipboard"))) {
+    const char *module=m->title;
+    if(!module||!*module||!strcmp(module,"Simplepicker C"))module=m->prompt;
+    char *caption=m->heading ? g_strdup(m->heading) :
+        (module&&*module ? g_strdup_printf("Simplepicker · %s",module) : g_strdup("Simplepicker"));
+    GtkWidget *heading=gtk_label_new(caption);
+    g_free(caption);
     gtk_label_set_xalign(GTK_LABEL(heading),0);
-    gtk_widget_add_css_class(heading,"simpleclip-heading");
+    gtk_label_set_ellipsize(GTK_LABEL(heading),PANGO_ELLIPSIZE_END);
+    gtk_widget_add_css_class(heading,"title");
     gtk_box_append(GTK_BOX(m->panel),heading);
-    GtkCssProvider *brand=gtk_css_provider_new();
-    gtk_css_provider_load_from_string(brand,".simpleclip-heading {color:@simple_heading;font-size:18px;font-weight:bold;margin-bottom:8px;}");
-    gtk_style_context_add_provider_for_display(display,GTK_STYLE_PROVIDER(brand),GTK_STYLE_PROVIDER_PRIORITY_USER+1);
-    g_object_unref(brand);
   }
+  /* Actions belong with the app heading, consistently across providers. */
+  if (json_object_object_length(m->shortcuts) > 0)
+    gtk_box_append(GTK_BOX(m->panel), shortcut_bar(m));
   GtkWidget *search = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   gtk_widget_add_css_class(search, "search-container");
   gtk_widget_set_overflow(search, GTK_OVERFLOW_HIDDEN);
@@ -688,11 +731,17 @@ char *menu_show(Menu *m) {
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(m->scroll),
                                  GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(m->scroll), m->list);
+  if (!m->previews) {
+    gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(m->scroll), MAX(100, m->height - 140));
+    gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(m->scroll), TRUE);
+  }
   GtkWidget *content = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
   gtk_widget_set_vexpand(content, TRUE);
   gtk_box_append(GTK_BOX(content), m->scroll);
   gtk_box_append(GTK_BOX(m->panel), content);
   m->preview_box = gtk_overlay_new();
+  gtk_widget_add_css_class(m->preview_box, "card");
+  gtk_widget_add_css_class(m->preview_box, "preview-box");
   GtkWidget *space = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
   gtk_widget_set_size_request(space, 500, 400);
   gtk_overlay_set_child(GTK_OVERLAY(m->preview_box), space);
@@ -711,8 +760,6 @@ char *menu_show(Menu *m) {
   gtk_label_set_wrap(GTK_LABEL(m->text), TRUE);
   gtk_label_set_wrap_mode(GTK_LABEL(m->text), PANGO_WRAP_WORD_CHAR);
   gtk_widget_add_css_class(m->text, "item-text");
-  gtk_widget_set_margin_start(m->text, 12);
-  gtk_widget_set_margin_end(m->text, 12);
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(text_scroll), m->text);
   gtk_overlay_add_overlay(GTK_OVERLAY(m->preview_box), text_scroll);
   gtk_widget_set_visible(m->preview_box, m->previews);
@@ -724,19 +771,6 @@ char *menu_show(Menu *m) {
   gtk_widget_set_vexpand(m->empty, TRUE);
   gtk_box_append(GTK_BOX(m->panel), m->empty);
   GtkWidget *footer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-  json_object_object_foreach(m->shortcuts, k, v) {
-    char *label;
-    if (g_key_file_has_key(m->navigation,"navigation",k,NULL)) {
-      char *binding=navigation_label(m->navigation,k);
-      label=g_strdup_printf("%s · %s",js(v),binding);g_free(binding);
-    } else label = g_strdup_printf("%s · Ctrl+%c", js(v), g_ascii_toupper(*k));
-    GtkWidget *b = gtk_button_new_with_label(label);
-    g_free(label);
-    gtk_widget_add_css_class(b, "item-subtext");
-    g_object_set_data_full(G_OBJECT(b), "key", g_strdup(k), g_free);
-    g_signal_connect(b, "clicked", G_CALLBACK(shortcut_clicked), m);
-    gtk_box_append(GTK_BOX(footer), b);
-  }
   char *up=navigation_label(m->navigation,"up"), *down=navigation_label(m->navigation,"down");
   char *left=navigation_label(m->navigation,"left"), *right=navigation_label(m->navigation,"right");
   char *enter=navigation_label(m->navigation,"activate");
@@ -772,7 +806,11 @@ char *menu_show(Menu *m) {
   else
     menu_refresh(m);
   if (!m->closed) {
-    if (m->vim_navigation) vim_search_mode(m, m->start_in_search);
+    if (!m->input && !m->password) {
+      simple_ui_bind_search(GTK_WINDOW(m->window),m->entry,m->list,"simplepicker",search_action,m);
+      simple_ui_search_keys(GTK_WINDOW(m->window),m->navigation);
+      simple_ui_search_start(GTK_WINDOW(m->window),m->start_in_search);
+    }
     gtk_window_present(GTK_WINDOW(m->window));
     gtk_widget_grab_focus(m->entry);
     if (m->benchmark)

@@ -60,3 +60,31 @@ Bells continue with the window hidden or another mode shown. After sleep/restart
 missed intervals produce one current cue rather than a burst of old bells. A finish
 rings once. The app must be running for timely alerts; existing timer/fasting state
 is preserved.
+
+## Shared base and portable installation
+
+Uses the shared C/GTK4 base in `simple-common`. Python UI code calls the same native library through a thin adapter. Shared theme and keyboard adapters replace separate implementations; app-specific commands and content remain local.
+
+Requires Linux and Python 3.11+ for the source installer. Building the shared base requires a C compiler, make, pkg-config and GTK4 >= 4.12 development files. Install dependencies using your distribution’s package manager; package names can differ.
+
+- Libraries / pkg-config modules: `gtk4 >= 4.12`.
+- Python imports: `gi`.
+- Required commands: `python3`, `cc`, `make`, `pkg-config`.
+- Optional Meditation interval bells: `paplay`.
+- Desktop requirements: GTK desktop; optional desktop notifications.
+
+From the suite checkout (no pacman or distro detection on this path):
+
+```sh
+./install --dependencies simpletimer
+./install --check simpletimer
+./install --no-packages --install simpletimer
+```
+
+To build a relocatable staging tree without changing your installation:
+
+```sh
+./install --install simpletimer --stage "$PWD/package-simpletimer"
+```
+
+Keep `simple-common` alongside the app sources. Staged files are under `.local/`; move that prefix as a unit so executables, shared libraries and resources stay together. Individual C Makefiles also accept `PREFIX`/`DESTDIR` where documented. See [portable builds](../docs/portability.md) for Debian/Arch dependency examples and limitations.

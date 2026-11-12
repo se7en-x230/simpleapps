@@ -165,7 +165,7 @@ def folder_menu(folder, library, browse=False):
         # Prefer action-name prefixes so s/o/b/l each identify exactly one action.
         prefixes = [r for r in rows if query and r.startswith(query)]
         return prefixes or [r for r in rows if all(w in normalize(labels[r]) for w in query.split())]
-    return menu(actions, auto_accept=True,
+    return menu(actions, auto_accept=False,
                 prompt=crumb, labels=labels, subtitles=subtitles, icons=icons, height=360,
                 shortcuts=[('h','Back','back')])
 

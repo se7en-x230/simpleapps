@@ -23,7 +23,7 @@ DATA = Path(os.environ.get('SIMPLEWALLPAPER_DATA',DATA_ROOT / ('wallpaper' if (D
 PUBLISHED = DATA_ROOT/'simplewallpaper/current'
 CONFIG = Path(os.environ.get('SIMPLEWALLPAPER_CONFIG',CONFIG_ROOT / ('simplewallpaper/config.json' if (CONFIG_ROOT/'simplewallpaper/config.json').exists() or not (CONFIG_ROOT/'wallpaper/config.json').exists() else 'wallpaper/config.json')))
 STATE = Path(os.environ.get('SIMPLEWALLPAPER_STATE',Path(os.environ.get('XDG_STATE_HOME', HOME / '.local/state')) / ('wallpaper' if (DATA_ROOT/'wallpaper').is_dir() else 'simplewallpaper')))
-THEMES = {'forest': ('Forest monk', 'forest-monk-quiet'), 'sea': ('Sea monk', 'sea-monk'), 'lotus': ('Lotus monk', 'lotus-monk'), 'matrix': ('Matrix monk', 'matrix-monk'), 'journey': ('Journey · Lotus', 'journey-lotus'), 'journey-lotus': ('Journey · Lotus', 'journey-lotus'), 'journey-sea': ('Journey · Sea', 'journey-sea'), 'journey-forest': ('Journey · Forest', 'journey-forest'), 'journey-matrix': ('Journey · Matrix', 'journey-matrix')}
+THEMES = {'river-traveller': ('The Beginning', 'river-traveller'), 'tree-of-seasons': ('Tree of Our Seasons', 'tree-of-seasons'), 'gothic-autumn': ('Gothic Autumn', 'gothic-autumn'), 'forest': ('Forest monk', 'forest-monk-quiet'), 'sea': ('Sea monk', 'sea-monk'), 'lotus': ('Lotus monk', 'lotus-monk'), 'matrix': ('Matrix monk', 'matrix-monk'), 'journey': ('Journey · Lotus', 'journey-lotus'), 'journey-lotus': ('Journey · Lotus', 'journey-lotus'), 'journey-sea': ('Journey · Sea', 'journey-sea'), 'journey-forest': ('Journey · Forest', 'journey-forest'), 'journey-matrix': ('Journey · Matrix', 'journey-matrix')}
 
 def theme_dir(config):
     if config.get('theme_directory'):
@@ -373,8 +373,9 @@ def menu():
         if not shutil.which('simple-open'):raise RuntimeError('Run simplewallpaper in a terminal, or install the optional Simplepicker menu')
         subprocess.run(['simple-open','terminal',sys.executable,str(Path(__file__).resolve()),'--menu'],check=True);return
     config=read_config()
-    choices=['Choose image file','Static · saved wallpaper','Daylight · image folder']
-    for key,label in [('forest','Forest monk'),('sea','Sea monk'),('lotus','Lotus monk'),('matrix','Matrix monk')]:
+    choices=['Choose image file']
+    choices+=['Static · saved wallpaper','Daylight · image folder']
+    for key,label in [('matrix','Matrix monk'),('river-traveller','The Beginning'),('lotus','Lotus monk'),('gothic-autumn','Gothic Autumn'),('forest','Forest monk'),('tree-of-seasons','Tree of Our Seasons'),('sea','Sea monk')]:
         if theme_dir({'theme':key}).is_dir():choices.append('Daylight · '+label)
     if any(theme_dir({'theme':key}).is_dir() for key in ('journey-lotus','journey-sea','journey-forest','journey-matrix')):choices.append('Daylight · Journey')
     choices+=['Location · '+config['location'],'Fade duration','Today’s schedule']
@@ -385,6 +386,9 @@ def menu():
     elif action=='Daylight · image folder':
         directory=choose('Image folder: 06.png–17.png and night.png')
         if directory:enable(directory=directory)
+    elif action=='Daylight · The Beginning': enable('river-traveller')
+    elif action=='Daylight · Gothic Autumn': enable('gothic-autumn')
+    elif action=='Daylight · Tree of Our Seasons': enable('tree-of-seasons')
     elif action=='Daylight · Forest monk': enable('forest')
     elif action=='Daylight · Sea monk': enable('sea')
     elif action=='Daylight · Lotus monk': enable('lotus')

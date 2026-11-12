@@ -43,7 +43,7 @@ Relative paths resolve against the config file. `~` and environment variables wo
 
 ## Keyboard workflow
 
-Search is focused on startup: type immediately, then Enter to navigate the notes. Set `start_in_search = false` to start in the note list instead.
+Search is focused on startup. Ctrl+J/K select notes while you type; Enter edits the selected note. Ctrl+Enter focuses the list for j/k navigation; `/` returns to search. Escape closes. Shared defaults and per-app overrides are documented in [the framework](../simple-common/FRAMEWORK.md#navigation-defaults).
 
 | Key | Action |
 | --- | --- |
@@ -80,3 +80,30 @@ Hidden files, symlinks below the notes root, binary files and notes larger than 
 ## Checks
 
 `python3 check.py` checks file safety and configuration. `python3 check-gui.py` exercises the real GTK editor in a graphical test session, using temporary notes only.
+
+## Shared base and portable installation
+
+Uses the shared C/GTK4 base in `simple-common`. Python UI code calls the same native library through a thin adapter. Shared theme and keyboard adapters replace separate implementations; app-specific commands and content remain local.
+
+Requires Linux and Python 3.11+ for the source installer. Building the shared base requires a C compiler, make, pkg-config and GTK4 >= 4.12 development files. Install dependencies using your distribution’s package manager; package names can differ.
+
+- Libraries / pkg-config modules: `gtk4 >= 4.12`.
+- Python imports: `gi`.
+- Required commands: `python3`, `cc`, `make`, `pkg-config`.
+- Desktop requirements: GTK desktop; local UTF-8 text files and optional existing sync folder.
+
+From the suite checkout (no pacman or distro detection on this path):
+
+```sh
+./install --dependencies simplenotes
+./install --check simplenotes
+./install --no-packages --install simplenotes
+```
+
+To build a relocatable staging tree without changing your installation:
+
+```sh
+./install --install simplenotes --stage "$PWD/package-simplenotes"
+```
+
+Keep `simple-common` alongside the app sources. Staged files are under `.local/`; move that prefix as a unit so executables, shared libraries and resources stay together. Individual C Makefiles also accept `PREFIX`/`DESTDIR` where documented. See [portable builds](../docs/portability.md) for Debian/Arch dependency examples and limitations.

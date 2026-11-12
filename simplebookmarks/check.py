@@ -30,3 +30,11 @@ with TemporaryDirectory() as td:
  first.opened('https://a.test');second.opened('https://a.test');assert m.Usage(p).count('https://a.test')==6
  assert m.category({'category':' Work '})=='Work'
 print('PASS: existing usage ordering, persistent counts and concurrent history updates')
+
+with TemporaryDirectory() as td:
+ root=Path(td)
+ for name in ('simplepicker','simplebookmarks'):
+  p=root/'data'/name/'bookmarks.json';p.parent.mkdir(parents=True);p.write_text('[]')
+ with patch.dict(os.environ,{'XDG_CONFIG_HOME':str(root/'config'),'XDG_DATA_HOME':str(root/'data')}):
+  assert m.settings(create=False)[1]==root/'data/simplebookmarks/bookmarks.json'
+print('PASS: migrated bookmark location takes precedence over legacy data')

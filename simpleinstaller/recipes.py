@@ -1,11 +1,15 @@
 """App-only staging recipes. Never invoke Newinit, setup-runtime or live services."""
 import os
+import hashlib
+import json
+import platform
+import shlex
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 
-TOOLS=('network','sound','disk','resources','displays','services')
+TOOLS=('network','sound','disk','resources','displays','services','passwords')
 
 def source_ignore(directory,names):
     result=[]
@@ -19,7 +23,7 @@ def source_ignore(directory,names):
                 if f.read(4)==b'\x7fELF':result.append(name)
     return result
 
-def roots_for(names):return list(dict.fromkeys([*names,'simple-common',*(['simplepicker'] if set(names)&{'simple-tools','simpleclip'} else [])]))
+def roots_for(names):return list(dict.fromkeys([*names,'simple-common',*(['simplepicker'] if set(names)&{'simple-tools','simpleclip'} else []),*(['simplefiles'] if 'simpletag' in names else [])]))
 
 def put(source,target,mode=None):
     target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source,target)
@@ -37,16 +41,61 @@ def shell_launcher(source,target):
 def desktop(path,name,command,icon='applications-utilities',category='Utility',terminal=False):
     write(path,f'[Desktop Entry]\nType=Application\nName={name}\nExec={command}\nIcon={icon}\nTerminal={str(terminal).lower()}\nCategories={category};\n')
 
+def framework_identity(common):
+    """Version the native base by its source, ABI environment and build options."""
+    digest=hashlib.sha256()
+    for name in ('simple-ui.c','simple-ui.h','Makefile'):
+        digest.update(name.encode());digest.update((common/name).read_bytes())
+    for command in ([*shlex.split(os.environ.get('CC','cc')),'--version'],['pkg-config','--modversion','gtk4']):
+        digest.update(subprocess.check_output(command).splitlines()[0])
+    digest.update(platform.machine().encode())
+    for name in ('CC','CFLAGS','CPPFLAGS','LDFLAGS','LDLIBS'):
+        digest.update((name+'='+os.environ.get(name,'')).encode())
+    return digest.hexdigest()
+
+
+def prepare_framework(common, stage, names, env):
+    identity=framework_identity(common)
+    installed=Path.home()/'.local/lib/simple-common'
+    library=installed/'libsimple-ui.so'
+    reusable=False
+    try:
+        record=json.loads((installed/'build.json').read_text())
+        reusable=isinstance(record,dict) and record.get('identity')==identity and record.get('sha256')==hashlib.sha256(library.read_bytes()).hexdigest()
+    except (OSError,ValueError):pass
+    if reusable:
+        put(library,common/'libsimple-ui.so')
+        # Source bundles preserve timestamps. A reused build is already current.
+        os.utime(common/'libsimple-ui.so',None)
+        print('Reusing installed Simple UI base.',flush=True)
+    else:
+        print('Building shared Simple UI base.',flush=True)
+        subprocess.run(['make','-C',str(common)],env=env,check=True)
+    target=stage/'.local/lib/simple-common'
+    owners={}
+    for filename in ('libsimple-ui.so','framework.css','palette.css','simple_ui.py'):
+        put(common/filename,target/filename)
+        owners[target/filename]=set(names)-{'simplewallpaper'}
+    write(target/'build.json',json.dumps({'identity':identity,'sha256':hashlib.sha256((target/'libsimple-ui.so').read_bytes()).hexdigest()},indent=2)+'\n')
+    owners[target/'build.json']=set(names)-{'simplewallpaper'}
+    header=stage/'.local/include/simple-ui.h'
+    put(common/'simple-ui.h',header)
+    owners[header]=set(names)-{'simplewallpaper'}
+    return owners
+
+
 def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
     for name in roots_for(names):shutil.copytree(root/name,work/name,ignore=source_ignore)
     share=stage/'.local/share';bins=stage/'.local/bin'
     env=dict(os.environ,HOME=str(stage),XDG_CONFIG_HOME=str(stage/'.config'),XDG_DATA_HOME=str(share),XDG_CACHE_HOME=str(stage/'.cache'),XDG_STATE_HOME=str(stage/'.local/state'))
     # Current recipes only need the compiler here. Dependencies were checked earlier.
     owners={}
+    if set(names)-{'simplewallpaper'}:
+        owners.update(prepare_framework(work/'simple-common',stage,names,env))
     for name in names:
         before={p for p in stage.rglob('*') if p.is_file()}
         src=work/name;recipe=catalog[name]['recipe'];target=share/name
-        if recipe not in ('wallpaper','tools','photo','files','notes','clip','capture','timer','pdf','image','bookmarks'):
+        if recipe not in ('wallpaper','tools','photo','files','notes','clip','capture','timer','pdf','image','bookmarks','garmin','tag'):
             print('\nBuilding '+catalog[name]['name']+'…',flush=True)
             subprocess.run(['make','-C',str(src),'-j2'],env=env,check=True)
         if recipe=='player':
@@ -70,6 +119,8 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
         elif recipe in ('panel','lock','torrent'):
             put(src/name,bins/name,0o755)
             if recipe=='panel':
+                shutil.copytree(src/'examples',target/'examples')
+                put(src/'README.txt',target/'README.txt')
                 put(src/'simplepanel-session-launcher',bins/'simplepanel-session',0o755)
                 write(bins/'simplepanel-dashboard','#!/bin/sh\nbindir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexport PATH="$bindir:$PATH"\nexec "$bindir/simplepanel" --system-dashboard "$@"\n',0o755)
             if recipe=='lock':put(src/'lock.toml',target/'lock.toml')
@@ -86,6 +137,17 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
         elif recipe=='capture':
             put(src/'simplecapture',bins/'simplecapture',0o755)
             put(src/'record.sh',target/'record.sh',0o755)
+        elif recipe=='tag':
+            for filename in ('main.py','client.py','config.toml','keys.ini','README.md'):
+                put(src/filename,target/filename)
+            shutil.copytree(src/'bridge',target/'bridge',ignore=source_ignore)
+            for filename in ('config.toml','keys.ini'):put(src/filename,target/'defaults'/filename)
+            shell_launcher(src/'launcher',bins/name)
+            put(work/'simplefiles/simplefiles',bins/'simplefiles',0o755)
+        elif recipe=='garmin':
+            for filename in ('main.py','client.py','details.py','README.md'):
+                put(src/filename,target/filename)
+            write(bins/name,'#!/bin/sh\nbindir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec python3 "$bindir/../share/simplegarmin/main.py" "$@"\n',0o755)
         elif recipe=='image':
             put(src/'simpleimage',bins/'simpleimage',0o755)
         elif recipe=='pdf':
@@ -126,7 +188,6 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
     keyboard_helper=share/'simple-common/simple_keyboard.py'
     put(root/'simple-common/simple_keyboard.py',keyboard_helper)
     owners[keyboard_helper]=set(names)
-    if set(names)<={'simplephoto','simplefiles','simplenotes','simplecapture','simpletimer','simplepdf','simpleimage','simplebookmarks'}:return owners
     before={p for p in stage.rglob('*') if p.is_file()}
     for p in (root/'simple-common').glob('*.py'):put(p,share/'simple-common'/p.name)
     for p in (root/'simple-common/assets/images').glob('*.png'):put(p,share/'simple/images'/p.name)
@@ -135,8 +196,10 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
 
     for p in stage.rglob('*'):
         if not p.is_file():continue
-        if p not in before:owners[p]=set(names)-{'simplephoto','simplefiles','simplenotes','simplecapture','simpletimer','simplepdf','simpleimage','simplebookmarks'}
+        if p not in before:owners[p]=set(names)
         rel=p.relative_to(stage).parts
+        if rel[:3]==('.local','lib','simple-common') or rel[:2]==('.local','include'):owners[p]=set(names)-{'simplewallpaper'}
         if (rel[:3] in (('.local','share','simplepicker'),('.local','lib','simplepicker')) or p==bins/'simplepicker-native'):
             owners[p]=set(names)&{'simplepicker','simple-tools'}
+    if 'simpletag' in names:owners[bins/'simplefiles']=set(names)&{'simpletag','simplefiles'}
     return owners

@@ -152,30 +152,40 @@ def menu(config):
         def __init__(self):
             super().__init__(application_id='space.go7.Simplecapture',flags=Gio.ApplicationFlags.NON_UNIQUE);self.connect('activate',self.activate)
         def activate(self,*_):
-            self.win=Gtk.ApplicationWindow(application=self,title='Simplecapture');self.win.set_default_size(470,320)
+            self.win=Gtk.ApplicationWindow(application=self,title='Simplecapture'); attach(self.win);self.win.set_default_size(470,-1)
             self.win.add_css_class('simplecapture')
-            box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=10)
-            for side in ('start','end','top','bottom'):getattr(box,'set_margin_'+side)(16)
+            box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=10);box.add_css_class('root')
             self.win.set_child(box)
-            title=Gtk.Label(label='Simplecapture',xalign=0);title.add_css_class('heading');box.append(title)
-            for label,mode,edit in [('Region [r]','region',config['edit']),('Full desktop [f]','fullscreen',config['edit']),('Quick region · no editor [c]','region',False),('Quick desktop · no editor [a]','fullscreen',False)]:
-                button=Gtk.Button(label=label);button.connect('clicked',lambda _,m=mode,e=edit:self.choose(m,e));box.append(button)
-            button=Gtk.Button(label='Record / stop [v]');button.connect('clicked',lambda *_:self.record());box.append(button)
-            box.append(Gtk.Label(label='v record · j/k move · r/f capture · c/a quick · Esc/q close',xalign=0))
-            css=Gtk.CssProvider();css.load_from_string('@define-color simple_bg #2a2a2a; @define-color simple_fg #e4ded2; @define-color simple_heading #f3a40a; @define-color simple_button #3b3b3b; @define-color simple_accent #8b0000; @define-color simple_on_accent #fff5ef;')
-            display=Gdk.Display.get_default();Gtk.StyleContext.add_provider_for_display(display,css,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-            config_dir=Path(os.environ.get('XDG_CONFIG_HOME',Path.home()/'.config'))/'simple'
-            data=Path(os.environ.get('XDG_DATA_HOME',Path.home()/'.local/share'))/'simple'
-            for path in (config_dir/'aliases.css',config_dir/'theme.css',data/'aliases.css',data/'theme.css'):
-                if path.is_file():
-                    css=Gtk.CssProvider();css.load_from_path(str(path));Gtk.StyleContext.add_provider_for_display(display,css,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION+1);break
-            css=Gtk.CssProvider();css.load_from_string('.simplecapture {background:@simple_bg;color:@simple_fg;} .simplecapture .heading {color:@simple_heading;font-size:18px;font-weight:bold;} .simplecapture button {background:@simple_button;color:@simple_fg;border-radius:8px;padding:10px;} .simplecapture button:focus {background:@simple_accent;color:@simple_on_accent;}')
-            Gtk.StyleContext.add_provider_for_display(display,css,Gtk.STYLE_PROVIDER_PRIORITY_USER+1)
+            title=Gtk.Label(label='Simplecapture',xalign=0);title.add_css_class('title');box.append(title)
+            self.list=Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE);self.list.add_css_class('simple-list')
+            self.list.set_activate_on_single_click(True);box.append(self.list)
+            self.actions=[('Region','r','region',config['edit']),('Full desktop','f','fullscreen',config['edit']),('Quick region · no editor','c','region',False),('Quick desktop · no editor','a','fullscreen',False),('Record / stop','v',None,None)]
+            for name,shortcut,mode,edit in self.actions:
+                row=Gtk.ListBoxRow();content=Gtk.Box(spacing=16)
+                for side in ('start','end','top','bottom'):getattr(content,'set_margin_'+side)(10)
+                name_label=Gtk.Label(label=name,xalign=0,hexpand=True);content.append(name_label)
+                key_label=Gtk.Label(label=shortcut);key_label.add_css_class('muted');content.append(key_label)
+                row.set_child(content);self.list.append(row)
+            self.list.connect('row-activated',lambda _,row:self.activate_row(row))
+            self.list.select_row(self.list.get_row_at_index(0))
+            hint=Gtk.Label(label='j/k move · Enter select · Esc/q close',xalign=0,wrap=True);hint.add_css_class('status');box.append(hint)
             controller=Gtk.EventControllerKey();controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE);controller.connect('key-pressed',self.key);self.win.add_controller(controller)
-            self.win.present()
+            self.win.present();self.list.get_selected_row().grab_focus()
+        def activate_row(self,row):
+            if row is None:return
+            _,_,mode,edit=self.actions[row.get_index()]
+            if mode is None:self.record()
+            else:self.choose(mode,edit)
         def choose(self,mode,edit):result.append(config|dict(mode=mode,edit=edit));self.win.close()
         def record(self):result.append(config|{'_record':True});self.win.close()
         def key(self,controller,key,code,state):
+            mods=state & Gtk.accelerator_get_default_mod_mask()
+            if mods in (0,Gdk.ModifierType.CONTROL_MASK) and key in (Gdk.KEY_j,Gdk.KEY_k,Gdk.KEY_Down,Gdk.KEY_Up):
+                row=self.list.get_selected_row();index=row.get_index() if row else 0
+                step=1 if key in (Gdk.KEY_j,Gdk.KEY_Down) else -1
+                target=self.list.get_row_at_index(max(0,min(len(self.actions)-1,index+step)))
+                self.list.select_row(target);target.grab_focus();return True
+            if not mods and key in (Gdk.KEY_Return,Gdk.KEY_KP_Enter):self.activate_row(self.list.get_selected_row());return True
             handled = control_key(self.win, key, state)
             if handled is not None:
                 if hasattr(self, 'prefix'): self.prefix = ''
@@ -201,6 +211,7 @@ for _keyboard_root in (_KeyboardPath(__file__).resolve().parent.parent / 'simple
         _keyboard_sys.path.insert(0, str(_keyboard_root))
         break
 from simple_keyboard import control_key
+from simple_ui import attach
 
 
 def main(argv=None):
