@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import json
 import math
+import re
 import os
 import subprocess
 import tempfile
@@ -10,6 +11,12 @@ import threading
 
 FPS = 30
 IMAGES = {'.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tif', '.tiff', '.avif'}
+
+
+def folder_images(path):
+    def natural(p):
+        return tuple((1,int(part)) if part.isdigit() else (0,part.casefold()) for part in re.split(r'(\d+)',p.name)),p.name
+    return sorted((p for p in Path(path).iterdir() if p.is_file() and p.suffix.lower() in IMAGES),key=natural)
 
 
 @dataclass(frozen=True)
@@ -49,18 +56,28 @@ class Plan:
     total: int
     music: object
     fit: bool
+    music_in: float = 0
+    music_out: float | None = None
 
     @property
     def seconds(self):
         return self.total / FPS
 
 
-def plan(items, music=None, fit=False, photo_seconds=4):
+def audio_range(music, start=0, end=None):
+    end = music.duration if end is None else end
+    if not all(math.isfinite(v) for v in (start, end, music.duration)) or start < 0 or end > music.duration + .001 or end - start < .1:
+        raise ValueError('Music Out must be after In (at least 0.1s), within the track.')
+    return start, min(end, music.duration)
+
+
+def plan(items, music=None, fit=False, photo_seconds=4, music_in=0, music_out=None):
     items = tuple(items)
     if not items:
         raise ValueError('Add at least one image or video.')
     if not math.isfinite(photo_seconds) or not 1 <= photo_seconds <= 60:
         raise ValueError('Photo time must be between 1 and 60 seconds.')
+    if music:music_in,music_out=audio_range(music,music_in,music_out)
     still = round(photo_seconds * FPS)
     frames = [still if item.kind == 'image' else round(item.duration * FPS) for item in items]
     if any(item.kind not in ('image', 'video') for item in items) or min(frames) < 3:
@@ -72,14 +89,14 @@ def plan(items, music=None, fit=False, photo_seconds=4):
         indices = [i for i, item in enumerate(items) if item.kind == 'image']
         if not indices:
             raise ValueError('Fit music needs at least one image; video lengths stay unchanged.')
-        budget = round(music.duration * FPS) + fade * (len(items)-1) - sum(frames[i] for i, item in enumerate(items) if item.kind == 'video')
+        budget = round((music_out-music_in) * FPS) + fade * (len(items)-1) - sum(frames[i] for i, item in enumerate(items) if item.kind == 'video')
         base, remainder = divmod(budget, len(indices))
         if base < max(3, 2*fade+1):
             raise ValueError('Music is too short for these clips and crossfades. Use a longer track or fewer clips.')
         for n, i in enumerate(indices):
             frames[i] = base + (n < remainder)
     total = sum(frames) - fade * (len(items)-1)
-    return Plan(items, tuple(frames), fade, total, music, fit)
+    return Plan(items, tuple(frames), fade, total, music, fit, music_in, music_out)
 
 
 class Cancelled(Exception):
@@ -167,8 +184,15 @@ class Renderer:
             result=folder/'slideshow.mp4'
             args=['-f','concat','-safe','1','-i',manifest]
             if project.music:
+                music_path=project.music.path
+                music_in,music_out=audio_range(project.music,project.music_in,project.music_out)
+                if music_in or music_out < project.music.duration:
+                    progress(.9, 'Cutting selected music range…')
+                    music_path=folder/'music.wav'
+                    self.run(['-i',project.music.path,'-ss',music_in,'-t',music_out-music_in,
+                        '-map','0:a:0','-vn','-c:a','pcm_s16le','-ar','48000','-ac','2',music_path])
                 if not project.fit:args+=['-stream_loop','-1']
-                args+=['-i',project.music.path,'-map','0:v:0','-map','1:a:0','-c:a','aac','-b:a','192k','-ar','48000','-ac','2']
+                args+=['-i',music_path,'-map','0:v:0','-map','1:a:0','-c:a','aac','-b:a','192k','-ar','48000','-ac','2']
                 fade_time=min(2.0,project.seconds/2)
                 args+=['-af',f'apad,atrim=duration={project.seconds:.9f},afade=t=out:st={project.seconds-fade_time:.9f}:d={fade_time:.9f}']
             else:args+=['-map','0:v:0','-an']
@@ -218,3 +242,25 @@ class Renderer:
                 raise
         progress(1, 'Saved high-quality and web MP4s.')
         return targets
+
+    def export_audio(self, music, destination, start=0, end=None):
+        start,end=audio_range(music,start,end)
+        destination=Path(destination).expanduser().absolute()
+        if destination.suffix.lower()!='.mp3':raise ValueError('Choose an .mp3 output filename.')
+        if destination.exists() or destination.is_symlink():raise ValueError('That output already exists. Choose a new filename.')
+        if not destination.parent.is_dir():raise ValueError('The output folder does not exist.')
+        with tempfile.TemporaryDirectory(prefix='simpleslideshow-audio-') as tmp:
+            result=Path(tmp)/'cut.mp3'
+            self.run(['-i',music.path,'-ss',start,'-t',end-start,'-map','0:a:0','-vn',
+                '-c:a','libmp3lame','-q:a','2',result])
+            if self.cancelled.is_set():raise Cancelled('Export cancelled.')
+            output=destination.open('xb')
+            try:
+                with output,result.open('rb') as source:
+                    while chunk:=source.read(1024*1024):
+                        if self.cancelled.is_set():raise Cancelled('Export cancelled.')
+                        output.write(chunk)
+            except BaseException:
+                destination.unlink(missing_ok=True)
+                raise
+        return destination

@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """Small keyboard-driven front end for FFmpeg. GPL-3.0-or-later."""
 from pathlib import Path
-from dataclasses import asdict
-import json
+import configparser
 import os
 import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import threading
 from datetime import datetime
 for shared in (Path(__file__).resolve().parent.parent/'simple-common',
@@ -19,10 +17,9 @@ from simple_ui import attach, control_key, KeyBindings
 import gi
 gi.require_version('Gtk','4.0')
 from gi.repository import Gtk,Gdk,Gio,GLib
-from render import Media,probe,plan,Renderer,Cancelled
+from render import Media,probe,plan,Renderer,Cancelled,audio_range,folder_images
 
 CONFIG=Path(os.environ.get('XDG_CONFIG_HOME',Path.home()/'.config'))/'simpleslideshow'
-STATE=Path(os.environ.get('XDG_STATE_HOME',Path.home()/'.local/state'))/'simpleslideshow'
 
 def box(vertical=True,spacing=10):
     return Gtk.Box(orientation=Gtk.Orientation.VERTICAL if vertical else Gtk.Orientation.HORIZONTAL,spacing=spacing)
@@ -39,17 +36,26 @@ class App(Gtk.Application):
             try:
                 with (CONFIG/'keys.ini').open('x') as f:f.write(Path(__file__).with_name('keys.ini').read_text())
             except FileExistsError:pass
+        # Add only newly introduced actions; keep all existing user bindings.
+        keyfile=configparser.ConfigParser(interpolation=None);keyfile.read(CONFIG/'keys.ini')
+        if not keyfile.has_section('navigation'):keyfile.add_section('navigation')
+        additions={'folder':'b,<Control><Shift>o','audio_in':'i','audio_out':'o','listen_audio':'u'};updated=False
+        for action,value in additions.items():
+            if not keyfile.has_option('navigation',action):keyfile.set('navigation',action,value);updated=True
+        if updated:
+            with (CONFIG/'keys.ini').open('w') as f:keyfile.write(f)
+        self.audio_process=None;self.audio_loading=False
         self.keys=KeyBindings('simpleslideshow');self.items=[];self.music=None;self.busy=False;self.renderer=None;self.external=None;self.initial=paths;self.last_exports=();self.cancel_worker=False;self.close_pending=False
         self.connect('activate',self.activate)
 
     def activate(self,*_):
         if self.get_active_window():self.get_active_window().present();return
-        self.win=Gtk.ApplicationWindow(application=self,title='Simpleslideshow');attach(self.win);self.win.set_default_size(1060,760)
+        self.win=Gtk.ApplicationWindow(application=self,title='Simpleslideshow');attach(self.win);self.win.set_default_size(1060,820)
         root=box(spacing=14);root.add_css_class('root');self.win.set_child(root)
         root.append(label('Simpleslideshow','title'))
         root.append(label('Images + short clips + music · One soft crossfade · High quality + web MP4','muted'))
         bar=box(False,8);root.append(bar);self.controls=[]
-        for name,action,callback in [('Add media','add',self.add),('Music','music',self.choose_music),('Title capture','title',self.capture_title),('Preview item','preview',self.preview),('Export both','export',self.export)]:
+        for name,action,callback in [('Add media','add',self.add),('Add folder','folder',self.add_folder),('Music','music',self.choose_music),('Title capture','title',self.capture_title),('Preview item','preview',self.preview),('Export both','export',self.export)]:
             b=Gtk.Button(label=f'{name} · {self.keys.label(action)}');b.connect('clicked',lambda _,fn=callback:fn());bar.append(b);self.controls.append(b)
         self.cancel_button=Gtk.Button(label='Cancel');self.cancel_button.connect('clicked',lambda *_:self.cancel());self.cancel_button.set_visible(False);bar.append(self.cancel_button)
         content=Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL);content.set_vexpand(True);content.set_position(450);root.append(content)
@@ -65,6 +71,16 @@ class App(Gtk.Application):
         settings=box();root.append(settings)
         musicrow=box(False,10);self.music_label=label('Music · none (silent export)','muted');self.music_label.set_hexpand(True);musicrow.append(self.music_label)
         clear=Gtk.Button(label='Clear music');clear.connect('clicked',lambda *_:self.clear_music());musicrow.append(clear);self.controls.append(clear);settings.append(musicrow)
+        self.audio_row=box(False,8);settings.append(self.audio_row)
+        self.audio_row.append(label('Audio In · i'))
+        self.music_in=Gtk.SpinButton.new_with_range(0,86400,.1);self.music_in.set_digits(2);self.audio_row.append(self.music_in)
+        self.audio_row.append(label('Out · o'))
+        self.music_out=Gtk.SpinButton.new_with_range(0,86400,.1);self.music_out.set_digits(2);self.audio_row.append(self.music_out)
+        self.listen=Gtk.Button(label='Listen · u');self.listen.connect('clicked',lambda *_:self.listen_audio());self.audio_row.append(self.listen)
+        reset=Gtk.Button(label='Reset');reset.connect('clicked',lambda *_:self.reset_audio());self.audio_row.append(reset)
+        save_audio=Gtk.Button(label='Save cut…');save_audio.connect('clicked',lambda *_:self.save_audio());self.audio_row.append(save_audio)
+        self.audio_length=label('Seconds · original unchanged','muted');self.audio_length.set_hexpand(True);self.audio_row.append(self.audio_length)
+        for spin in (self.music_in,self.music_out):spin.connect('value-changed',self.audio_changed)
         timing=box(False,14);settings.append(timing)
         timing.append(label('Seconds / photo'));self.seconds=Gtk.SpinButton.new_with_range(1,60,.5);self.seconds.set_value(4);timing.append(self.seconds)
         self.fit=Gtk.CheckButton(label='Fit images to music · f');timing.append(self.fit)
@@ -72,38 +88,46 @@ class App(Gtk.Application):
         self.summary=label('','status');settings.append(self.summary)
         settings.append(label('Clips keep their length; clip audio is muted. Fixed timing loops/trims music and fades it out.','muted'))
         self.progress=Gtk.ProgressBar();self.progress.set_visible(False);root.append(self.progress)
-        self.status=label('Ready. Your draft is saved automatically.','status');root.append(self.status)
-        root.append(label('a add · m music · t capture title · j/k select · J/K reorder · x remove · f timing · p preview · e export · Esc cancel/close','muted'))
+        self.status=label('Ready. Add images or clips, then choose music.','status');root.append(self.status)
+        root.append(label('a add · b folder · m music · t capture title · j/k select · J/K reorder · x remove · f timing · p preview · e export · Esc cancel/close','muted'))
         for widget,signal in [(self.seconds,'value-changed'),(self.fit,'toggled'),(self.orientation,'notify::selected')]:widget.connect(signal,self.changed)
         controller=Gtk.EventControllerKey();controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE);controller.connect('key-pressed',self.key);self.win.add_controller(controller)
         self.win.connect('close-request',self.close)
-        self.load();self.refresh();self.win.present();self.list.grab_focus()
+        self.refresh();self.win.present();self.list.grab_focus()
         if self.initial:self.add_paths(self.initial)
 
-    def load(self):
-        try:
-            data=json.loads((STATE/'draft.json').read_text())
-            self.items=[Media(**item) for item in data.get('items',[]) if item.get('kind') in ('image','video')]
-            if data.get('music'):self.music=Media(**data['music'])
-            self.seconds.set_value(float(data.get('seconds',4)));self.fit.set_active(bool(data.get('fit',False)));self.orientation.set_selected(int(bool(data.get('portrait',False))))
-        except (OSError,ValueError,TypeError):pass
+    def current_plan(self):
+        return plan(self.items,self.music,self.fit.get_active(),self.seconds.get_value(),self.music_in.get_value(),self.music_out.get_value() if self.music else None)
 
-    def save(self):
-        STATE.mkdir(parents=True,exist_ok=True)
-        data={'items':[asdict(i) for i in self.items],'music':asdict(self.music) if self.music else None,'seconds':self.seconds.get_value(),'fit':self.fit.get_active(),'portrait':self.orientation.get_selected()==1}
-        with tempfile.NamedTemporaryFile(mode='w',dir=STATE,delete=False) as f:json.dump(data,f,indent=2);temp=Path(f.name)
-        temp.replace(STATE/'draft.json')
+    def set_audio_range(self,start=0,end=None):
+        self.audio_loading=True
+        duration=self.music.duration if self.music else 0
+        for spin in (self.music_in,self.music_out):spin.set_range(0,max(1,duration))
+        self.music_in.set_value(start);self.music_out.set_value(duration if end is None else end)
+        self.audio_loading=False
+
+    def audio_changed(self,*_):
+        if self.audio_loading:return
+        self.stop_audio();self.changed()
+
+    def reset_audio(self):
+        self.stop_audio();self.set_audio_range();self.changed()
 
     def changed(self,*_):
         try:
-            p=plan(self.items,self.music,self.fit.get_active(),self.seconds.get_value())
+            p=self.current_plan()
             photo=next((p.frames[i]/30 for i,item in enumerate(self.items) if item.kind=='image'),0)
             self.summary.set_text(f'{len(self.items)} items · {p.seconds:.1f}s total · {photo:.1f}s / photo · {p.fade/30:.1f}s crossfade')
         except ValueError as e:self.summary.set_text(str(e))
+        self.audio_row.set_sensitive(bool(self.music) and not self.busy)
+        if self.music:
+            try:
+                start,end=audio_range(self.music,self.music_in.get_value(),self.music_out.get_value())
+                self.audio_length.set_text(f'{end-start:.2f}s selected · seconds')
+            except ValueError:self.audio_length.set_text('Out must follow In')
+        else:self.audio_length.set_text('Seconds · original unchanged')
         self.seconds.set_sensitive(not self.busy and not self.fit.get_active())
         self.music_label.set_text('Music · '+(Path(self.music.path).name+f' · {self.music.duration:.1f}s' if self.music else 'none (silent export)'))
-        try:self.save()
-        except OSError as e:self.status.set_text('Could not save draft: '+str(e))
 
     def index(self):
         row=self.list.get_selected_row();return row.get_index() if row else -1
@@ -133,7 +157,7 @@ class App(Gtk.Application):
 
     def work(self,fn,done):
         if self.busy:return
-        self.cancel_worker=False;self.set_busy(True)
+        self.stop_audio();self.cancel_worker=False;self.set_busy(True)
         def worker():
             try:value=fn();error=None
             except Exception as e:value=None;error=e
@@ -147,20 +171,21 @@ class App(Gtk.Application):
             return False
         threading.Thread(target=worker,daemon=True).start()
 
-    def dialog(self,title,callback,multiple=False,audio=False,save=False):
+    def dialog(self,title,callback,multiple=False,audio=False,save=False,folder=False):
         if self.busy:return
         dialog=Gtk.FileDialog(title=title)
         if save:
-            dialog.set_initial_name('Slideshow-'+datetime.now().strftime('%Y%m%d-%H%M')+'.mp4')
+            dialog.set_initial_name(Path(self.music.path).stem+'-cut.mp3' if audio and self.music else 'Slideshow-'+datetime.now().strftime('%Y%m%d-%H%M')+'.mp4')
             path=Path(GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_VIDEOS) or Path.home()/'Videos')
             if path.is_dir():dialog.set_initial_folder(Gio.File.new_for_path(str(path)))
-        else:
+        elif not folder:
             f=Gtk.FileFilter();f.set_name('Music' if audio else 'Images and video')
             for mime in (['audio/*'] if audio else ['image/*','video/*']):f.add_mime_type(mime)
             filters=Gio.ListStore.new(Gtk.FileFilter);filters.append(f);dialog.set_filters(filters)
         def finished(obj,result):
             try:
                 if save:paths=[obj.save_finish(result).get_path()]
+                elif folder:paths=[obj.select_folder_finish(result).get_path()]
                 elif multiple:
                     files=obj.open_multiple_finish(result);paths=[files.get_item(i).get_path() for i in range(files.get_n_items())]
                 else:paths=[obj.open_finish(result).get_path()]
@@ -169,16 +194,26 @@ class App(Gtk.Application):
             except GLib.Error:pass
             except Exception as e:self.status.set_text(str(e))
         if save:dialog.save(self.win,None,finished)
+        elif folder:dialog.select_folder(self.win,None,finished)
         elif multiple:dialog.open_multiple(self.win,None,finished)
         else:dialog.open(self.win,None,finished)
 
     def add(self):self.dialog('Add images or short clips',self.add_paths,True)
+    def add_folder(self):self.dialog('Add a folder of images',self.add_paths,folder=True)
     def add_paths(self,paths,intro=False):
         def read():
             found=[];errors=[]
             for p in paths:
                 if self.cancel_worker:break
-                try:found.append(probe(p))
+                try:
+                    if Path(p).is_dir():
+                        images=folder_images(p)
+                        if not images:errors.append('No supported images in '+str(p))
+                        for image in images:
+                            if self.cancel_worker:break
+                            try:found.append(probe(image))
+                            except Exception as e:errors.append(str(e))
+                    else:found.append(probe(p))
                 except Exception as e:errors.append(str(e))
             return found,errors
         def done(value):
@@ -190,10 +225,10 @@ class App(Gtk.Application):
 
     def choose_music(self):
         self.dialog('Choose one music track',lambda paths:self.work(lambda:probe(paths[0],True),self.music_loaded),audio=True)
-    def music_loaded(self,music):self.music=music;self.changed();self.status.set_text('Music loaded.')
+    def music_loaded(self,music):self.stop_audio();self.music=music;self.set_audio_range();self.changed();self.status.set_text('Music loaded. Set In/Out in seconds; u listens to the selected range.')
     def clear_music(self):
         if self.busy:return
-        self.music=None;self.fit.set_active(False);self.changed()
+        self.stop_audio();self.music=None;self.set_audio_range();self.fit.set_active(False);self.changed()
     def remove(self):
         if self.busy:return
         i=self.index()
@@ -236,11 +271,11 @@ class App(Gtk.Application):
         self.work(wrapped,done)
     def export(self):
         if self.busy:return
-        try:plan(self.items,self.music,self.fit.get_active(),self.seconds.get_value())
+        try:self.current_plan()
         except ValueError as e:self.status.set_text(str(e));return
         self.dialog('Export high-quality and web MP4s',self.export_to,save=True)
     def export_to(self,paths):
-        try:p=plan(self.items,self.music,self.fit.get_active(),self.seconds.get_value())
+        try:p=self.current_plan()
         except ValueError as e:self.status.set_text(str(e));return
         portrait=self.orientation.get_selected()==1;renderer=Renderer()
         def progress(fraction,message):
@@ -251,10 +286,59 @@ class App(Gtk.Application):
             if self.cancel_worker:renderer.cancel();raise Cancelled('Export cancelled.')
             # Refresh duration information in case source files changed since import.
             items=[probe(item.path) for item in p.items];music=probe(p.music.path,True) if p.music else None
-            fresh=plan(items,music,p.fit,self.seconds_value)
+            fresh=plan(items,music,p.fit,self.seconds_value,p.music_in,p.music_out)
             return renderer.export_pair(fresh,paths[0],progress,portrait)
         def done(exports):self.last_exports=exports;self.status.set_text('Saved: '+exports[0].name+' + '+exports[1].name)
         self.seconds_value=self.seconds.get_value();self.work(run,done)
+    def stop_audio(self):
+        if self.audio_process:
+            process=self.audio_process;self.audio_process=None
+            if process.poll() is None:process.terminate()
+            def reap():
+                try:process.wait(timeout=2)
+                except subprocess.TimeoutExpired:process.kill();process.wait()
+            threading.Thread(target=reap,daemon=True).start()
+        if hasattr(self,'listen'):self.listen.set_label('Listen · u')
+
+    def listen_audio(self):
+        if self.busy or not self.music:return
+        if self.audio_process:self.stop_audio();return
+        try:
+            start,end=audio_range(self.music,self.music_in.get_value(),self.music_out.get_value())
+            if shutil.which('ffplay'):
+                command=['ffplay','-nodisp','-autoexit','-loglevel','error','-ss',str(start),'-t',str(end-start),'-i',self.music.path]
+            elif shutil.which('mpv'):
+                command=['mpv','--no-video','--start='+str(start),'--length='+str(end-start),'--',self.music.path]
+            else:raise ValueError('Install ffplay (FFmpeg) or mpv to listen to the audio cut.')
+            process=subprocess.Popen(command,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            self.audio_process=process;self.listen.set_label('Stop · u')
+            def poll():
+                if self.audio_process is not process:return False
+                if process.poll() is None:return True
+                self.audio_process=None;self.listen.set_label('Listen · u')
+                if process.returncode:self.status.set_text('Audio preview failed. Check the audio device and source file.')
+                return False
+            GLib.timeout_add(150,poll)
+        except (ValueError,OSError) as e:self.status.set_text(str(e))
+
+    def focus_audio(self,spin):
+        if self.music and not self.busy:spin.grab_focus();spin.select_region(0,-1)
+
+    def save_audio(self):
+        if self.busy or not self.music:return
+        try:audio_range(self.music,self.music_in.get_value(),self.music_out.get_value())
+        except ValueError as e:self.status.set_text(str(e));return
+        self.dialog('Save selected audio as MP3',self.save_audio_to,audio=True,save=True)
+
+    def save_audio_to(self,paths):
+        if self.busy or not self.music:return
+        music=self.music;start=self.music_in.get_value();end=self.music_out.get_value();renderer=Renderer()
+        def run():
+            self.renderer=renderer
+            if self.cancel_worker:renderer.cancel();raise Cancelled('Export cancelled.')
+            return renderer.export_audio(probe(music.path,True),paths[0],start,end)
+        self.work(run,lambda path:self.status.set_text('Saved audio cut: '+str(path)))
+
     def cancel(self):
         self.cancel_worker=True
         if self.renderer:self.renderer.cancel()
@@ -263,20 +347,25 @@ class App(Gtk.Application):
             except ProcessLookupError:pass
         self.status.set_text('Cancelling…')
     def close(self,*_):
+        self.stop_audio()
         if self.busy:
             self.close_pending=True;self.cancel();return True
-        self.save();return False
+        return False
     def key(self,_,key,code,state):
         focus=self.win.get_focus()
         editing=isinstance(focus,(Gtk.Editable,Gtk.TextView))
         if self.keys.matches('cancel',key,state):
             if self.busy:self.cancel()
+            elif self.audio_process:self.stop_audio()
             elif editing:self.list.grab_focus()
             else:self.win.close()
             return True
         if self.busy:return False
         if editing and not state&Gdk.ModifierType.CONTROL_MASK:return False
-        for action,callback in [('add',self.add),('music',self.choose_music),('clear_music',self.clear_music),('title',self.capture_title),('export',self.export),('remove',self.remove),('move_up',lambda:self.reorder(-1)),('move_down',lambda:self.reorder(1)),('fit',lambda:self.fit.set_active(not self.fit.get_active())),('quit',self.win.close)]:
+        for action,callback in [('audio_in',lambda:self.focus_audio(self.music_in)),('audio_out',lambda:self.focus_audio(self.music_out)),('listen_audio',self.listen_audio)]:
+            if self.keys.matches(action,key,state):
+                callback();return True
+        for action,callback in [('add',self.add),('folder',self.add_folder),('music',self.choose_music),('clear_music',self.clear_music),('title',self.capture_title),('export',self.export),('remove',self.remove),('move_up',lambda:self.reorder(-1)),('move_down',lambda:self.reorder(1)),('fit',lambda:self.fit.set_active(not self.fit.get_active())),('quit',self.win.close)]:
             if self.keys.matches(action,key,state):callback();return True
         if self.keys.matches('preview',key,state) and (key not in (Gdk.KEY_Return,Gdk.KEY_KP_Enter) or self.list.has_focus() or isinstance(focus,Gtk.ListBoxRow)):
             self.preview();return True
