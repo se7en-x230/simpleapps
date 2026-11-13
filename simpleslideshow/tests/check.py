@@ -17,6 +17,12 @@ class Timing(unittest.TestCase):
  def test_impossible(self):
   with self.assertRaisesRegex(ValueError,'too short'):plan([Media('/a','image'),Media('/b','video',30)],Media('/m','audio',4),True)
   with self.assertRaises(ValueError):plan([Media('/a','video',3)],Media('/m','audio',4),True)
+ def test_timeline_spans(self):
+  from timeline import spans
+  p=plan([Media('/a','image'),Media('/b','video',2),Media('/c','image')])
+  blocks=spans(p)
+  self.assertEqual(blocks[0][0],0);self.assertAlmostEqual(blocks[-1][1],p.seconds)
+  for before,after in zip(blocks,blocks[1:]):self.assertAlmostEqual(before[1]-after[0],p.fade/30)
  def test_music_cut_timing(self):
   music=Media('/song','audio',30)
   p=plan([Media('/a','image'),Media('/b','image')],music,True,music_in=12.5,music_out=22.5)
@@ -54,6 +60,14 @@ class Export(unittest.TestCase):
   def rms(start):
    raw=subprocess.check_output(['ffmpeg','-v','error','-ss',str(start),'-i',str(target),'-t','0.08','-vn','-f','f32le','-ac','1','-']);samples=array.array('f');samples.frombytes(raw);return math.sqrt(sum(v*v for v in samples)/len(samples))
   self.assertLess(rms(p.seconds-.09),rms(.2)/8)
+ def test_preview_matches_timing_and_music_cut(self):
+  p=plan([probe(self.root/'red.png'),probe(self.root/'blue.png')],probe(self.audio,True),False,2,.5,1.5)
+  target=self.root/'preview.webm';Renderer().preview(p,target)
+  data=self.metadata(target)
+  self.assertAlmostEqual(float(data['format']['duration']),p.seconds,delta=.08)
+  video=next(s for s in data['streams'] if s['codec_type']=='video')
+  self.assertEqual((video['width'],video['height']),(640,360));self.assertEqual(video['codec_name'],'vp8')
+  self.assertIn('vorbis',[s['codec_name'] for s in data['streams']])
  def test_pair_full_resolution(self):
   p=plan([probe(self.root/'red.png'),probe(self.root/'blue.png')],probe(self.audio,True),False,1)
   outputs=Renderer().export_pair(p,self.root/'pair.mp4')

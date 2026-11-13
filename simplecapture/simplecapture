@@ -104,20 +104,25 @@ def save_png(folder,content):
     raise OSError('Could not choose a unique screenshot filename')
 
 
-def capture(config):
-    required=['grim']+(['slurp'] if config['mode']=='region' else [])+(['swappy'] if config['edit'] else [])+(['wl-copy'] if config['copy'] else [])
+def capture(config, source=None):
+    required=(['ffmpeg'] if source else ['grim']+(['slurp'] if config['mode']=='region' else []))+(['swappy'] if config['edit'] else [])+(['wl-copy'] if config['copy'] else [])
     for command in required:
         if not shutil.which(command):raise RuntimeError('Missing dependency: '+command)
     geometry=None
-    if config['mode']=='region':
+    if source is None and config['mode']=='region':
         result=subprocess.run(['slurp','-d','-b','00000000','-s','00000000','-B','00000000'],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         if result.returncode or not result.stdout.strip():
             if config['cancel_action']=='cancel':return None
         else:
             geometry=result.stdout.decode().strip()
             if not re.fullmatch(r'-?\d+,-?\d+ [1-9]\d*x[1-9]\d*',geometry):raise ValueError('Invalid selection geometry')
-    time.sleep(config['delay_seconds']+config['settle_ms']/1000)
-    content=run(['grim',*(['-g',geometry] if geometry else []),'-'])
+    if source is not None:
+        source=Path(source).expanduser().resolve(strict=True)
+        if not source.is_file():raise ValueError('Choose an image file to annotate')
+        content=run(['ffmpeg','-v','error','-i',str(source),'-frames:v','1','-threads','1','-f','image2pipe','-c:v','png','-'])
+    else:
+        time.sleep(config['delay_seconds']+config['settle_ms']/1000)
+        content=run(['grim',*(['-g',geometry] if geometry else []),'-'])
     if not content.startswith(PNG):raise ValueError('Capture did not produce a PNG')
     if config['edit']:
         with tempfile.TemporaryDirectory(prefix='simplecapture-') as tmp:
@@ -132,8 +137,17 @@ def capture(config):
             swappy.set('Default','save_dir',str(config['save_dir']))
             swappy.set('Default','save_filename_format','Screenshot-%Y%m%d-%H%M%S.png')
             swappy.set('Default','auto_save','false')
+            if source is not None:
+                swappy.set('Default','save_dir',str(base))
+                swappy.set('Default','save_filename_format','title.png')
+                swappy.set('Default','early_exit','true')
             with (conf/'swappy/config').open('w') as f:swappy.write(f)
-            content=run(['swappy','-f',str(image),'-o','-'],env=dict(os.environ,XDG_CONFIG_HOME=str(conf)))
+            if source is not None:
+                run(['swappy','-f',str(image)],env=dict(os.environ,XDG_CONFIG_HOME=str(conf)))
+                edited=base/'title.png'
+                content=edited.read_bytes() if edited.is_file() else b''
+            else:
+                content=run(['swappy','-f',str(image),'-o','-'],env=dict(os.environ,XDG_CONFIG_HOME=str(conf)))
         if not content:return None
         if not content.startswith(PNG):raise ValueError('Editor did not return a PNG')
     saved=save_png(config['save_dir'],content) if config['save'] else None
@@ -218,9 +232,12 @@ def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     modes=parser.add_mutually_exclusive_group();modes.add_argument('-f','--fullscreen',action='store_true');modes.add_argument('--region',action='store_true')
     parser.add_argument('--print-path',action='store_true',help='Save the capture and print its filename');parser.add_argument('--edit',action='store_true',help='Open Swappy for annotation');parser.add_argument('--record',action='store_true');parser.add_argument('--menu',action='store_true');parser.add_argument('--no-edit',action='store_true');parser.add_argument('--save',action='store_true');parser.add_argument('--no-copy',action='store_true');parser.add_argument('--delay',type=int);parser.add_argument('--check-config',action='store_true')
+    parser.add_argument('--input',type=Path,help='Annotate an existing image with Swappy instead of capturing the screen')
     args=parser.parse_args(argv)
     try:
+        if args.input and (args.region or args.fullscreen or args.record or args.menu):raise ValueError('--input cannot be combined with screen capture or recording modes')
         config=load_config()
+        if args.input:config['edit']=True
         if args.check_config:print(config_path());return 0
         if args.fullscreen:config['mode']='fullscreen'
         if args.region:config['mode']='region'
@@ -244,7 +261,7 @@ def main(argv=None):
             if config is None:return 0
             if config.get('_record'):record(config)
         if not config['edit'] and not config['save'] and not config['copy']:raise ValueError('Quick capture needs copy or save enabled')
-        saved=capture(config)
+        saved=capture(config,args.input)
         if args.print_path and isinstance(saved,Path):print(saved)
         return 0
     except (OSError,ValueError,RuntimeError,subprocess.SubprocessError) as exc:

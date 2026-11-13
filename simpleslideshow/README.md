@@ -7,11 +7,13 @@ A small Vim-style GTK front end for **FFmpeg and ffprobe**. Make family slidesho
 ## Workflow
 
 1. **a** adds images and clips; **b** adds a folder of images in natural filename order (`image2` before `image10`), without subfolders. **j/k** selects an item. **Shift+j/k** changes its position; **x** removes it from the list, never from disk.
-2. **m** chooses music. Set **Audio In / Out** in seconds to skip an intro or shorten the track. **u** listens to the selected range; **Reset** restores the whole track. **Save cut…** saves a separate high-quality MP3 without needing any images. Use **t** for a title image: Simplecapture runs grim/slurp and Swappy, then inserts the saved, annotated screenshot first. You can also add any prepared title image normally.
+2. **m** chooses music. Set **Audio In / Out** in seconds to skip an intro or shorten the track. **u** listens to the selected range; **Reset** restores the whole track. **Save cut…** saves a separate high-quality MP3 without needing any images. Use **t / Title image** to open the selected still image in **Swappy**, through Simplecapture. Add text, arrows or drawings, then **Save (Ctrl+S)**; Swappy closes and a separate annotated PNG is saved and inserted first. Closing without saving cancels. The original image stays unchanged. If no still is selected, choose an image. Slurp is only for screen-region selection and is not needed for this title workflow.
 3. Choose landscape (16:9) or portrait (9:16), and either timing mode:
    - **Fit images to music:** use the selected audio range and share the remaining music time equally among still images. Video clips keep their duration. Crossfade overlap is included in the calculation. An impossible fit is reported before exporting.
    - **Fixed photo timing:** choose 1–60 seconds per image (default 4). The selected audio range loops if shorter, is trimmed if longer, and fades out over the final two seconds (or half the slideshow for very short exports).
-4. **e** exports both versions with the same name: `NAME-high.mp4` and `NAME-web.mp4`.
+4. Click **Play slideshow** beside the preview, or press **Space**, to watch the whole slideshow inside the app. The first play prepares a small temporary preview with the actual timing, clips, crossfades, audio cut and ending fade. Space pauses/resumes; **Stop** returns to the selected item. The video controls support seeking. Replays reuse the preview until the project or source files change.
+5. The aligned **Images** and **Music** timelines show the same time ruler and playback position. Image blocks show their duration and crossfade overlaps; click to select, drag a block to move it, or use Shift+j/k. Click/drag the ruler or music lane to preview from that point. The music lane shows the selected source range, repeat boundaries and final fade; it is a timing lane, not an audio waveform editor.
+6. **e** exports both versions with the same name: `NAME-high.mp4` and `NAME-web.mp4`.
 
 | Export | Landscape | Portrait | Encoding |
 | --- | --- | --- | --- |
@@ -34,12 +36,13 @@ Existing output files are never overwritten. Both versions are prepared before p
 | Ctrl+Shift+M | Clear music |
 | i / o | Focus audio In / Out; type seconds, then Esc to leave |
 | u | Listen to / stop the selected audio range |
-| t / Ctrl+T | Capture and annotate an intro image |
+| t / Ctrl+T | Annotate the selected image as a title in Swappy |
 | j/k or arrows | Select an item |
 | Shift+j/k | Move selected item later/earlier |
 | x / Delete | Remove selected item |
 | f | Toggle fit-to-music |
 | p / Enter on list | Open selected source for preview |
+| Space | Play/pause the assembled slideshow |
 | e / Ctrl+E | Export high and web versions |
 | Esc | Cancel work, leave an editable control, or close |
 | q | Close outside text editing |
@@ -56,7 +59,7 @@ From the suite checkout:
 simpleslideshow
 ```
 
-Debian 13: install the [shared build/runtime requirements](../docs/portability.md), plus `ffmpeg`; then use `./install --no-packages --install simpleslideshow`. Install Simplecapture separately for title capture (`grim`, `slurp`, `swappy` on Wayland). Audio-cut previews use ffplay (usually included with FFmpeg), with mpv as a fallback. Separate audio cuts use MP3 VBR quality 2 and preserve the original file; slideshow music uses the same cut points. Source previews use mpv when available for videos, otherwise the desktop default viewer.
+Debian 13: install the [shared build/runtime requirements](../docs/portability.md), plus `ffmpeg`, `libgtk-4-media-gstreamer`, `gstreamer1.0-plugins-base`, and `gstreamer1.0-plugins-good`; then use `./install --no-packages --install simpleslideshow`. Install Simplecapture and Swappy for title-image annotation. Screen capture separately uses grim/slurp on Wayland. Audio-cut previews use ffplay (usually included with FFmpeg), with mpv as a fallback. Separate audio cuts use MP3 VBR quality 2 and preserve the original file; slideshow music uses the same cut points. Embedded playback uses GTK’s GStreamer media backend with VP8/Vorbis in a temporary WebM preview; exports remain high-quality and web H.264 MP4. Source previews use mpv when available for videos, otherwise the desktop default viewer.
 
 Uninstall with `./install --uninstall simpleslideshow` (review the plan first with
 `./install --uninstall simpleslideshow --dry-run`). See the suite uninstall documentation

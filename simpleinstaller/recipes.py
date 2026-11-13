@@ -145,7 +145,7 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
             shell_launcher(src/'launcher',bins/name)
             put(work/'simplefiles/simplefiles',bins/'simplefiles',0o755)
         elif recipe=='slideshow':
-            for filename in ('main.py','render.py','keys.ini','README.md'):
+            for filename in ('main.py','render.py','timeline.py','keys.ini','README.md'):
                 put(src/filename,target/filename)
             put(src/'keys.ini',target/'defaults/keys.ini')
             shell_launcher(src/'launcher',bins/name)

@@ -949,7 +949,10 @@
         "python",
         "python-gobject",
         "ffmpeg",
-        "xdg-utils"
+        "xdg-utils",
+        "gst-plugins-base",
+        "gst-plugins-good",
+        "python-cairo"
       ],
       "modules": [
         "gtk4 >= 4.12"
@@ -964,7 +967,8 @@
         "xdg-open"
       ],
       "imports": [
-        "gi"
+        "gi",
+        "cairo"
       ],
       "optional": {},
       "recipe": "slideshow",
@@ -975,7 +979,8 @@
         "render.py",
         "keys.ini",
         "launcher",
-        "README.md"
+        "README.md",
+        "timeline.py"
       ]
     }
   }

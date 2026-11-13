@@ -264,3 +264,15 @@ class Renderer:
                 destination.unlink(missing_ok=True)
                 raise
         return destination
+
+    def preview(self, project, destination, progress=lambda fraction,message:None, portrait=False):
+        # GTK's standard GStreamer base/good plugins can play VP8 + Vorbis.
+        with tempfile.TemporaryDirectory(prefix='simpleslideshow-preview-render-') as tmp:
+            intermediate=Path(tmp)/'preview.mp4'
+            self.export(project,intermediate,lambda f,m:progress(f*.85,m),size=(360,640) if portrait else (640,360))
+            progress(.9,'Preparing playback…')
+            self.run(['-i',intermediate,'-map','0:v:0','-map','0:a?',
+                '-c:v','libvpx','-deadline','realtime','-cpu-used','8','-crf','20','-b:v','0',
+                '-threads','2','-c:a','libvorbis','-q:a','4',destination])
+        progress(1,'Preview ready.')
+        return Path(destination)

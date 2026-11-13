@@ -79,6 +79,7 @@ its module, command and Python checks are useful on every distribution.
 | Simplepanel | `libjson-c-dev`, `libgtk4-layer-shell-dev`, `libpulse-dev`, `curl`, `fastfetch` |
 | Simple tools | `libjson-c-dev`, `libgtk4-layer-shell-dev`, `pulseaudio-utils`, `network-manager`, `bluez`, `util-linux`, `wlr-randr`, `wl-clipboard`, `sudo`, `iproute2` |
 | Simplegarmin | Common dependencies; Garmin credentials are needed only to retrieve account data |
+| Simpleslideshow | `ffmpeg`, `python3-gi`, `python3-cairo`, `python3-gi-cairo`, `libgtk-4-media-gstreamer`, `gstreamer1.0-plugins-base`, `gstreamer1.0-plugins-good` |
 | Simpletag | MusicBrainz Picard, **`picard-cli`**, and `fpcalc` (Debian: `libchromaprint-tools`); verify that your Picard version supplies the CLI |
 | Simplewallpaper | **`awww` and `awww-daemon`**, ImageMagick with **`magick`**; obtain compatible upstream builds if your distribution does not package those commands |
 | Simplelock | `libjson-c-dev`, `libpam0g-dev`, and **gtk4-layer-shell >= 1.2**; Debian 13's stock 1.0.4 package is insufficient |
