@@ -95,7 +95,7 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
     for name in names:
         before={p for p in stage.rglob('*') if p.is_file()}
         src=work/name;recipe=catalog[name]['recipe'];target=share/name
-        if recipe not in ('wallpaper','tools','photo','files','notes','clip','capture','timer','pdf','image','bookmarks','garmin','tag'):
+        if recipe not in ('wallpaper','tools','photo','files','notes','clip','capture','timer','pdf','image','bookmarks','garmin','tag','slideshow'):
             print('\nBuilding '+catalog[name]['name']+'…',flush=True)
             subprocess.run(['make','-C',str(src),'-j2'],env=env,check=True)
         if recipe=='player':
@@ -144,6 +144,11 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
             for filename in ('config.toml','keys.ini'):put(src/filename,target/'defaults'/filename)
             shell_launcher(src/'launcher',bins/name)
             put(work/'simplefiles/simplefiles',bins/'simplefiles',0o755)
+        elif recipe=='slideshow':
+            for filename in ('main.py','render.py','keys.ini','README.md'):
+                put(src/filename,target/filename)
+            put(src/'keys.ini',target/'defaults/keys.ini')
+            shell_launcher(src/'launcher',bins/name)
         elif recipe=='garmin':
             for filename in ('main.py','client.py','details.py','README.md'):
                 put(src/filename,target/filename)
@@ -182,7 +187,7 @@ def stage_apps(here,catalog,root,names,options,stage,work,wallpapers=None):
             shutil.copytree(work/'simplepicker/python',share/'simplepicker/python',dirs_exist_ok=True,ignore=source_ignore)
         else:raise ValueError('Unknown install recipe: '+recipe)
         command={'simplepanel':'simplepanel-dashboard','simple-tools':'simple-sound','simplecapture':'simplecapture --menu'}.get(name,name)
-        desktop(share/'applications'/(name+'.desktop'),catalog[name]['name'],command+' %F' if recipe in ('photo','pdf','image') else command,category='Graphics;Photography' if recipe in ('photo','image') else 'Office' if recipe=='pdf' else 'Utility')
+        desktop(share/'applications'/(name+'.desktop'),catalog[name]['name'],command+' %F' if recipe in ('photo','pdf','image','slideshow') else command,category='Graphics;Photography' if recipe in ('photo','image') else 'Office' if recipe=='pdf' else 'AudioVideo' if recipe=='slideshow' else 'Utility')
         for p in stage.rglob('*'):
             if p.is_file() and p not in before:owners[p]={name}
     keyboard_helper=share/'simple-common/simple_keyboard.py'

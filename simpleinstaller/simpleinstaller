@@ -449,7 +449,7 @@ def choose_rows(title,rows,chosen=None,allow_empty=False,groups=None,installed=N
 APP_GROUPS = (
     ('Everyday', ('simplebookmarks','simpleclip','simplefiles','simplenotes','simplepicker','simpletimer')),
     ('Organize', ('simplecalendar','simplecontacts','simplegarmin','simplemail')),
-    ('Media', ('simplecapture','simpleimage','simplepdf','simplephoto','simpleplayer','simpletag')),
+    ('Media', ('simplecapture','simpleimage','simplepdf','simplephoto','simpleplayer','simpleslideshow','simpletag')),
     ('Desktop', ('simple-tools','simplelock','simplepanel','simpletorrent','simplewallpaper')),
 )
 

@@ -936,6 +936,47 @@
         "bridge/engine.py",
         "bridge/MANIFEST.toml"
       ]
+    },
+    "simpleslideshow": {
+      "name": "Simpleslideshow",
+      "description": "Images, short clips and music \u00b7 high-quality and web slideshows",
+      "build": [
+        "base-devel",
+        "pkgconf"
+      ],
+      "runtime": [
+        "gtk4",
+        "python",
+        "python-gobject",
+        "ffmpeg",
+        "xdg-utils"
+      ],
+      "modules": [
+        "gtk4 >= 4.12"
+      ],
+      "commands": [
+        "cc",
+        "make",
+        "pkg-config",
+        "python3",
+        "ffmpeg",
+        "ffprobe",
+        "xdg-open"
+      ],
+      "imports": [
+        "gi"
+      ],
+      "optional": {},
+      "recipe": "slideshow",
+      "compatibility": "GTK desktop; title capture uses optional Simplecapture on Wayland",
+      "after_install": "Run simpleslideshow. Every export writes -high.mp4 and -web.mp4; Simplecapture is optional for screenshot title cards.",
+      "source_files": [
+        "main.py",
+        "render.py",
+        "keys.ini",
+        "launcher",
+        "README.md"
+      ]
     }
   }
 }

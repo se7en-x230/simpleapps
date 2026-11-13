@@ -1,0 +1,4 @@
+#!/bin/sh
+bindir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+export PATH="$bindir:$PATH"
+exec python3 "$bindir/../share/simpleslideshow/main.py" "$@"

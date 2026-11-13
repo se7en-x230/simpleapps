@@ -79,6 +79,13 @@ Click a screenshot or app name for features, installation and keyboard controls.
 | [![Simplegarmin screenshot](docs/screenshots/simplegarmin.png)](simplegarmin/README.md) | [![Simpletag screenshot](docs/screenshots/simpletag.png)](simpletag/README.md) |
 | Garmin health and activity overview | Picard music metadata review and tagging |
 
+### [Simpleslideshow](simpleslideshow/README.md)
+
+[![Simpleslideshow screenshot](docs/screenshots/simpleslideshow.png)](simpleslideshow/README.md)
+
+Images, short clips and music with Vim keys, one soft crossfade, and automatic
+high-quality + web MP4 exports. Fit images to music or fade music at the end.
+
 Screenshots use an isolated demo profile with sample content.
 
 ## Portable builds
