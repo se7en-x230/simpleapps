@@ -120,6 +120,32 @@ Run as your normal user; package installation uses sudo. The installer builds so
 
 Uninstallation retains settings, personal data, modified files and shared resources used by remaining apps. System packages and source copies are retained.
 
+## Put installed commands on PATH
+
+Simpleapps installs commands in `~/.local/bin`. This directory must be on your
+shell's PATH to run commands such as `simpletimer` by name.
+
+For **Bash or Zsh**, run this in the current terminal:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+To keep it for new terminals, add that same line once to `~/.bashrc` (Bash) or
+`~/.zshrc` (Zsh), then open a new terminal. Skip this if the directory is already
+on your PATH.
+
+For **Fish**, run this once; Fish saves the setting for future terminals:
+
+```fish
+fish_add_path "$HOME/.local/bin"
+```
+
+Check an app you installed with `command -v simpletimer`. You can also launch
+it directly with `~/.local/bin/simpletimer`. Desktop-menu entries already use
+absolute paths and do not require this shell setup. Run the installer as your
+normal user, not with `sudo`.
+
 ## Debian 13 and other distributions
 
 Install the compiler, GTK4 headers and Python GTK bindings first, then use the

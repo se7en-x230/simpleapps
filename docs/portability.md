@@ -42,6 +42,8 @@ simpletimer
 Run the installer as your normal user. `--no-packages` uses dependencies already
 installed by apt; it does not call pacman or change your package manager. Add the
 PATH line to your shell configuration if `~/.local/bin` is not already present.
+See [Put installed commands on PATH](../README.md#put-installed-commands-on-path)
+for permanent Bash, Zsh and Fish setup.
 
 ### Add the picker and clipboard tools
 

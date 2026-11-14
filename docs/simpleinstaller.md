@@ -22,6 +22,10 @@ On Debian and other distributions, [install the dependencies first](portability.
 
 For the standalone installer archive, run `./simpleinstaller` inside its extracted directory instead.
 
+Installed commands go into `~/.local/bin`. Follow the
+[PATH setup instructions](../README.md#put-installed-commands-on-path) to run them
+by name from your terminal; desktop-menu launchers work without this step.
+
 ## Choose the apps you want to keep
 
 Apps tracked by the installer start checked. The checkboxes describe the installation you want after applying the changes.
