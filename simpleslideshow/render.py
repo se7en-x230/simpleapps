@@ -1,6 +1,7 @@
 """Small FFmpeg slideshow renderer. SPDX-License-Identifier: GPL-3.0-or-later"""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
+import shutil
 import json
 import math
 import re
@@ -24,6 +25,12 @@ class Media:
     path: str
     kind: str
     duration: float = 0
+    label: str = ""
+    zoom: float = 1
+    focus_x: float = .5
+    focus_y: float = .5
+    fill: bool = False
+    end_zoom: float = 1
 
 
 def probe(path, audio=False):
@@ -48,6 +55,12 @@ def probe(path, audio=False):
     return Media(str(path), 'audio' if audio else 'video', duration)
 
 
+def refresh_media(item):
+    fresh=probe(item.path,item.kind=='audio')
+    return replace(fresh,duration=item.duration if fresh.kind=='image' else fresh.duration,
+                   label=item.label,zoom=item.zoom,focus_x=item.focus_x,focus_y=item.focus_y,fill=item.fill,end_zoom=item.end_zoom)
+
+
 @dataclass(frozen=True)
 class Plan:
     items: tuple
@@ -58,6 +71,7 @@ class Plan:
     fit: bool
     music_in: float = 0
     music_out: float | None = None
+    subtitles: str | None = None
 
     @property
     def seconds(self):
@@ -71,15 +85,18 @@ def audio_range(music, start=0, end=None):
     return start, min(end, music.duration)
 
 
-def plan(items, music=None, fit=False, photo_seconds=4, music_in=0, music_out=None):
+def plan(items, music=None, fit=False, photo_seconds=4, music_in=0, music_out=None, subtitles=None):
     items = tuple(items)
     if not items:
         raise ValueError('Add at least one image or video.')
     if not math.isfinite(photo_seconds) or not 1 <= photo_seconds <= 60:
         raise ValueError('Photo time must be between 1 and 60 seconds.')
     if music:music_in,music_out=audio_range(music,music_in,music_out)
+    for item in items:
+        if not all(math.isfinite(v) for v in (item.duration,item.zoom,item.focus_x,item.focus_y,item.end_zoom)) or not 1<=item.zoom<=8 or not 0<=item.focus_x<=1 or not 0<=item.focus_y<=1 or item.duration<0 or not 1<=item.end_zoom<=1.3:
+            raise ValueError('Invalid image duration or framing.')
     still = round(photo_seconds * FPS)
-    frames = [still if item.kind == 'image' else round(item.duration * FPS) for item in items]
+    frames = [round((item.duration or photo_seconds)*FPS) if item.kind=='image' else round(item.duration*FPS) for item in items]
     if any(item.kind not in ('image', 'video') for item in items) or min(frames) < 3:
         raise ValueError('Use images or video clips at least 0.1 seconds long.')
     fade = min(18, min(frames) // 3) if len(items) > 1 else 0
@@ -96,7 +113,7 @@ def plan(items, music=None, fit=False, photo_seconds=4, music_in=0, music_out=No
         for n, i in enumerate(indices):
             frames[i] = base + (n < remainder)
     total = sum(frames) - fade * (len(items)-1)
-    return Plan(items, tuple(frames), fade, total, music, fit, music_in, music_out)
+    return Plan(items, tuple(frames), fade, total, music, fit, music_in, music_out, subtitles)
 
 
 class Cancelled(Exception):
@@ -157,7 +174,20 @@ class Renderer:
             if not Path(item.path).is_file(): raise ValueError('Missing source: '+item.path)
         width, height = size
         if width < 2 or height < 2 or width%2 or height%2:raise ValueError('Output dimensions must be positive and even.')
+        canvas_height=height
+        if project.subtitles and height>width:height=max(2,int(height*.9)//2*2)
+        caption_space=f',pad={width}:{canvas_height}:0:0:color=black' if height!=canvas_height else ''
         normal = f'scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps={FPS},format=yuv420p,settb=1/{FPS},setpts=PTS-STARTPTS'
+        def normal_for(item,start=0,total=1):
+            motion=''
+            if item.kind=='image' and item.end_zoom>1:
+                z=f'1+{item.end_zoom-1:.8f}*min(1,(on+{start})/{max(1,total-1)})'
+                motion=f",scale=iw*4:ih*4:flags=bicubic,format=yuv444p,zoompan=z='{z}':x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={width}x{height}:fps={FPS},format=yuv420p,settb=1/{FPS},setpts=PTS-STARTPTS"
+            if item.kind=='image' and (item.zoom>1 or item.fill):
+                cw=f'min(iw,ih*{width}/{height})' if item.fill else 'iw'
+                ch=f'min(ih,iw*{height}/{width})' if item.fill else 'ih'
+                return f"crop=w='max(2,trunc({cw}/{item.zoom}/2)*2)':h='max(2,trunc({ch}/{item.zoom}/2)*2)':x='max(0,min(iw-ow,iw*{item.focus_x}-ow/2))':y='max(0,min(ih-oh,ih*{item.focus_y}-oh/2))',"+normal+motion+caption_space
+            return normal+motion+caption_space
         encode = ['-an','-c:v','libx264','-preset','veryfast','-crf','18','-pix_fmt','yuv420p','-r',str(FPS),'-threads','2','-video_track_timescale','15360']
         def input_args(item, start, frames):
             if item.kind == 'image':return ['-loop','1','-framerate',str(FPS),'-i',item.path]
@@ -170,12 +200,12 @@ class Renderer:
                 length = project.frames[i] - start - (fade if i < len(project.items)-1 else 0)
                 target=folder/f'{len(segments):05}.mp4'
                 progress((2*i)/steps, f'Rendering {i+1}/{len(project.items)} · {Path(item.path).name}')
-                self.run([*input_args(item,start,length),'-vf',normal+',tpad=stop_mode=clone:stop_duration=1',
+                self.run([*input_args(item,start,length),'-vf',normal_for(item,start,project.frames[i])+',tpad=stop_mode=clone:stop_duration=1',
                     '-frames:v',length,*encode,target])
                 segments.append(target)
                 if i < len(project.items)-1:
                     other=project.items[i+1];target=folder/f'{len(segments):05}.mp4'
-                    filters=f'[0:v]{normal},tpad=stop_mode=clone:stop_duration=1,trim=end_frame={fade},setpts=PTS-STARTPTS[a];[1:v]{normal},tpad=stop_mode=clone:stop_duration=1,trim=end_frame={fade},setpts=PTS-STARTPTS[b];[a][b]xfade=transition=fade:duration={fade/FPS:.9f}:offset=0,format=yuv420p[v]'
+                    filters=f'[0:v]{normal_for(item,project.frames[i]-fade,project.frames[i])},tpad=stop_mode=clone:stop_duration=1,trim=end_frame={fade},setpts=PTS-STARTPTS[a];[1:v]{normal_for(other,0,project.frames[i+1])},tpad=stop_mode=clone:stop_duration=1,trim=end_frame={fade},setpts=PTS-STARTPTS[b];[a][b]xfade=transition=fade:duration={fade/FPS:.9f}:offset=0,format=yuv420p[v]'
                     self.run([*input_args(item,project.frames[i]-fade,fade),*input_args(other,0,fade),
                         '-filter_complex',filters,'-map','[v]','-frames:v',fade,*encode,target])
                     segments.append(target)
@@ -197,7 +227,12 @@ class Renderer:
                 args+=['-af',f'apad,atrim=duration={project.seconds:.9f},afade=t=out:st={project.seconds-fade_time:.9f}:d={fade_time:.9f}']
             else:args+=['-map','0:v:0','-an']
             progress(.94, 'Finishing MP4…')
-            self.run([*args,'-c:v','copy','-t',f'{project.seconds:.9f}','-movflags','+faststart',result])
+            video_args=['-c:v','copy']
+            if project.subtitles:
+                subtitle_path=folder/'captions.srt';shutil.copyfile(project.subtitles,subtitle_path)
+                style='FontName=Noto Sans,FontSize=14,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=2,Shadow=0,Alignment=2,MarginV=12'
+                video_args=['-vf',f"subtitles=filename='{subtitle_path}':force_style='{style}'",'-c:v','libx264','-preset','veryfast','-crf','18','-pix_fmt','yuv420p']
+            self.run([*args,*video_args,'-t' ,f'{project.seconds:.9f}','-movflags','+faststart',result])
             # Exclusive publication works on cloud mounts and never overwrites another export.
             if self.cancelled.is_set():raise Cancelled('Export cancelled.')
             output=destination.open('xb')

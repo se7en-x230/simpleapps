@@ -977,6 +977,7 @@
       "source_files": [
         "main.py",
         "render.py",
+        "project.py",
         "keys.ini",
         "launcher",
         "README.md",

@@ -43,7 +43,7 @@ Relative paths resolve against the config file. `~` and environment variables wo
 
 ## Keyboard workflow
 
-Search is focused on startup. Ctrl+J/K select notes while you type; Enter edits the selected note. Ctrl+Enter focuses the list for j/k navigation; `/` returns to search. Escape closes. Shared defaults and per-app overrides are documented in [the framework](../simple-common/FRAMEWORK.md#navigation-defaults).
+Search is focused on startup. Ctrl+J/K select notes while you type; Enter edits the selected note. Ctrl+Enter focuses the list for j/k navigation; `/` returns to search. Escape closes from the list; in the editor it returns to Normal mode. Shared defaults and per-app overrides are documented in [the framework](../simple-common/FRAMEWORK.md#navigation-defaults).
 
 | Key | Action |
 | --- | --- |
@@ -51,9 +51,9 @@ Search is focused on startup. Ctrl+J/K select notes while you type; Enter edits 
 | gg / G | First / last note |
 | Ctrl+u / Ctrl+d | Jump through notes or page through preview |
 | / | Search filenames and contents |
-| l / h | Preview / return to list (h at start of preview) |
+| l / Ctrl+Enter | Open Normal mode / return to the note list |
 | i / Enter | Edit the selected note |
-| Escape | Save and close |
+| Escape | Return from Insert to Normal mode; close from the note list |
 | Ctrl+Enter | Save and return to note navigation |
 | n | New note; enter `Folder/Title.md` for an existing subfolder |
 | Shift+n | New folder |
@@ -62,12 +62,12 @@ Search is focused on startup. Ctrl+J/K select notes while you type; Enter edits 
 | y / Shift+y | Copy note text / file reference |
 | Ctrl+s | Save now |
 | Ctrl+Shift+s | Save current text as a new note |
-| Ctrl+r | Refresh note list |
+| Ctrl+r | Redo in Normal mode; refresh in the note list |
 | Shift+r | Recover an available draft as a new note |
 | ? | Key help |
 | q | Close outside text fields |
 
-In edit mode, type normally. Standard Ctrl+a/c/x/v and undo/redo work. Ctrl+Enter returns to navigation; in preview, h/j/k/l and gg/G move the cursor. Search and name fields accept ordinary text. Tab and mouse controls remain available.
+In edit mode, type normally. Standard Ctrl+a/c/x/v and undo/redo work. Ctrl+Enter returns to navigation; in Normal mode, h/j/k/l, w/b/e, 0/^/$ and gg/G move the cursor. Escape returns to Normal mode. Use i/a to insert before/after the cursor, I/A at the first nonblank/end of the line, and o/O to open a line below/above. x deletes a character, dd deletes a line, u undoes, and Ctrl+r redoes. q saves and closes from Normal mode. Search and name fields accept ordinary text. Tab and mouse controls remain available.
 
 ## Saving and recovery
 

@@ -42,6 +42,49 @@ class Export(unittest.TestCase):
  @classmethod
  def tearDownClass(cls):cls.tmp.cleanup()
  def metadata(self,path):return json.loads(subprocess.check_output(['ffprobe','-v','error','-show_format','-show_streams','-of','json',str(path)]))
+ def test_project_roundtrip_and_crop(self):
+  from dataclasses import replace
+  from project import write_project,read_project
+  from render import refresh_media
+  source=self.root/'split.png';im=Image.new('RGB',(200,100),'red');im.paste('blue',(100,0,200,100));im.save(source)
+  item=Media(str(source),'image',1.2,'Focus',2,.2,.5,False)
+  path=write_project(self.root/'edit.simpleslideshow.project',[item],probe(self.audio,True),fit=False)
+  loaded=read_project(path);self.assertEqual(loaded['items'],[item]);self.assertEqual(refresh_media(item),item)
+  self.assertEqual(json.loads(path.read_text())['items'][0]['path'],'split.png')
+  self.assertEqual(plan(loaded['items']).total,36)
+  for focus,channel in [(.2,0),(.8,2)]:
+   target=self.root/f'crop-{channel}.mp4';Renderer().export(plan([replace(item,focus_x=focus)]),target,size=(160,90))
+   raw=subprocess.check_output(['ffmpeg','-v','error','-i',str(target),'-frames:v','1','-f','rawvideo','-pix_fmt','rgb24','-'])
+   pixel=raw[(45*160+80)*3:(45*160+80)*3+3];self.assertGreater(pixel[channel],200);self.assertLess(pixel[2-channel],30)
+  self.assertEqual(Image.open(source).size,(200,100))
+ def test_gentle_zoom_motion(self):
+  from dataclasses import replace
+  from render import refresh_media
+  source=self.root/'zoom.png';im=Image.new('RGB',(640,360),'black');im.paste('white',(280,140,360,220));im.save(source)
+  item=Media(str(source),'image',2,zoom=1,fill=True,end_zoom=1.2)
+  self.assertEqual(refresh_media(item).end_zoom,1.2)
+  target=self.root/'zoom.mp4';Renderer().export(plan([item]),target,size=(320,180))
+  def white_area(at):
+   raw=subprocess.check_output(['ffmpeg','-v','error','-ss',str(at),'-i',str(target),'-frames:v','1','-f','rawvideo','-pix_fmt','gray','-'])
+   return sum(v>180 for v in raw)
+  self.assertGreater(white_area(1.9),white_area(0)*1.25)
+  raw=subprocess.check_output(['ffmpeg','-v','error','-i',str(target),'-f','rawvideo','-pix_fmt','gray','-'])
+  centers=[]
+  for offset in range(0,len(raw),320*180):
+   pixels=raw[offset:offset+320*180];points=[(i%320,i//320,v) for i,v in enumerate(pixels) if v>30]
+   mass=sum(v for x,y,v in points);centers.append((sum(x*v for x,y,v in points)/mass,sum(y*v for x,y,v in points)/mass))
+  # A centered slow zoom must not wobble by whole pixels between frames.
+  for axis in (0,1):self.assertLess(max(c[axis] for c in centers)-min(c[axis] for c in centers),.6)
+
+  self.assertAlmostEqual(float(self.metadata(target)['format']['duration']),2,delta=.05)
+  joined=self.root/'zoom-crossfade.mp4';sequence=plan([item,item]);Renderer().export(sequence,joined,size=(320,180))
+  self.assertAlmostEqual(float(self.metadata(joined)['format']['duration']),sequence.seconds,delta=.05)
+ def test_subtitle_overlay(self):
+  sub=self.root/'captions.srt';sub.write_text('1\n00:00:00,000 --> 00:00:01,000\nReadable caption\n')
+  p=plan([probe(self.root/'red.png')],photo_seconds=1,subtitles=str(sub));target=self.root/'subtitled.mp4'
+  Renderer().export(p,target,size=(360,640))
+  raw=subprocess.check_output(['ffmpeg','-v','error','-i',str(target),'-frames:v','1','-f','rawvideo','-pix_fmt','rgb24','-'])
+  self.assertGreater(sum(r>150 and g>150 and b>150 for r,g,b in zip(raw[0::3],raw[1::3],raw[2::3])),10)
  def test_fit_export(self):
   # Longer test track, with fixed video length in the middle.
   audio=self.root/'long.wav';subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','sine=duration=5','-y',str(audio)],check=True)

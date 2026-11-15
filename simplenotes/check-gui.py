@@ -2,11 +2,14 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from importlib.machinery import SourceFileLoader
-import gi,time
+import gi,time,os
 gi.require_version('Gtk','4.0')
 from gi.repository import Gtk,GLib,Gdk
 m=SourceFileLoader('notes',str(Path(__file__).with_name('simplenotes'))).load_module()
-work=TemporaryDirectory();root=Path(work.name)
+work=TemporaryDirectory();base=Path(work.name);root=base/'notes';root.mkdir()
+os.environ['XDG_CONFIG_HOME']=str(base/'config');os.environ['XDG_STATE_HOME']=str(base/'state')
+cfg=base/'config/simplenotes';cfg.mkdir(parents=True)
+(cfg/'keys.ini').write_text('[interaction]\nstart_in_search=true\nescape_closes=true\n')
 (root/'Ideas.md').write_text('# Ideas\n\nBuild small tools that work well together.\n')
 (root/'Projects').mkdir();(root/'Projects/Weekend.md').write_text('# Weekend\n\n- Sort photographs\n- Back up music\n')
 (root/'Read later.md').write_text('Searchable content: cobalt\n')
@@ -28,7 +31,7 @@ def patched(win):
     app.key(None,Gdk.KEY_Return,0,Gdk.ModifierType.CONTROL_MASK)
     key(Gdk.KEY_slash)
     app.search.set_text('cobalt');assert app.path.name=='Read later.md'
-    app.search.set_text('');app.search.emit('activate');app.move()
+    app.search.set_text('');app.search.emit('activate');key(Gdk.KEY_Return,ctrl=True);app.move()
     assert app.path.name=='Ideas.md';key(Gdk.KEY_j);assert app.path.name=='Weekend.md'
     key(Gdk.KEY_g);key(Gdk.KEY_g);assert app.path.name=='Ideas.md'
     app.search.set_text('cobalt');assert len(app.visible)==1 and app.path.name=='Read later.md'
@@ -57,6 +60,8 @@ def patched(win):
     assert (root/'Ideas.md').read_text()=='External revision'
     assert app.mode=='edit';key(Gdk.KEY_Return,ctrl=True)
     key(Gdk.KEY_l);key(Gdk.KEY_Down);key(Gdk.KEY_g);key(Gdk.KEY_g);key(Gdk.KEY_h)
+    assert app.mode=='preview'
+    key(Gdk.KEY_Return,ctrl=True)
     assert app.mode=='list'
     app.copy();assert not app.dirty
     key(Gdk.KEY_Escape);state['passed']=True

@@ -123,6 +123,9 @@ def show_menu(search, *, prompt='Search', title='simplepicker', width=600, heigh
                 raise RuntimeError('Unknown native menu event: ' + event)
         code = process.wait(timeout=5)
         if code not in (0, 1): raise RuntimeError(f'Native menu exited with status {code}')
+        if result is None and os.environ.get('SIMPLEPICKER_CANCEL_SESSION'):
+            Path(os.environ['SIMPLEPICKER_CANCEL_SESSION']).touch()
+            raise SystemExit(0)
         return result
     finally:
         if process.poll() is None:

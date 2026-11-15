@@ -163,6 +163,9 @@ class InfoWindow(Gtk.ApplicationWindow):
         target.grab_focus()
 
     def key(self, controller, key, code, state):
+        if key == Gdk.KEY_Escape and os.environ.get('SIMPLEPICKER_CANCEL_SESSION'):
+            Path(os.environ['SIMPLEPICKER_CANCEL_SESSION']).touch()
+            self.close(); return True
         handled = control_key(self, key, state)
         if handled is not None: return handled
         if self.keybindings.matches("cancel",key,state):
@@ -275,7 +278,11 @@ def show_report(title, provider, *, sections=True, terminal=None, fit_contents=F
         win = InfoWindow(app, title, provider, sections=sections, terminal=terminal, fit_contents=fit_contents, keys=keys, key_scope=key_scope)
         win.present()
     app.connect('activate', activate)
-    return app.run([])
+    result = app.run([])
+    cancelled = os.environ.get('SIMPLEPICKER_CANCEL_SESSION')
+    if cancelled and Path(cancelled).exists():
+        raise SystemExit(0)
+    return result
 
 
 def local_addresses():

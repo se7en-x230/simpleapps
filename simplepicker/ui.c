@@ -495,6 +495,10 @@ static gboolean key(GtkEventControllerKey *c, guint k, guint code,
     return TRUE;
   }
 
+  /* System menu Escape dismisses the entire menu session, even in search. */
+  if (k == GDK_KEY_Escape && g_getenv("SIMPLEPICKER_CANCEL_SESSION")) {
+    menu_finish(m, NULL); return TRUE;
+  }
     int control_result=simple_control_key(GTK_WINDOW(m->window),k,mods);
     if(control_result>=0)return control_result;
   if (m->vim_navigation) {

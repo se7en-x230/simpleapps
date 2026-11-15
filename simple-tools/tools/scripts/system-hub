@@ -8,6 +8,7 @@ for _root in reversed(_roots):
     for _name in ('simplepicker/python','simple-common'):
         if (_root/_name).is_dir():_path_sys.path.insert(0,str(_root/_name))
 import argparse
+import tempfile
 import os
 from pathlib import Path
 import runpy
@@ -33,7 +34,9 @@ def main():
         print(f'{len(tools.tools)} tools configured in {args.config}')
         return
     os.environ['SIMPLEPICKER_VIM_MENU'] = '1'
-    tools.run(start='health' if args.health else None)
+    with tempfile.TemporaryDirectory(prefix='system-menu-') as session:
+        os.environ['SIMPLEPICKER_CANCEL_SESSION'] = str(Path(session) / 'cancelled')
+        tools.run(start='health' if args.health else None)
 
 
 if __name__ == '__main__':

@@ -166,6 +166,9 @@ class ToolMenu:
                 if result.returncode:
                     notify(tool['name'], f'Command exited with status {result.returncode}', error=True)
                     return False
+            cancelled = os.environ.get('SIMPLEPICKER_CANCEL_SESSION')
+            if cancelled and Path(cancelled).exists():
+                return True
             return tool.get('close_after', False)
         except OSError as error:
             notify(tool['name'], str(error), error=True)

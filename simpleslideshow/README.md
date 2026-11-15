@@ -70,3 +70,15 @@ for preserved settings and shared files.
 `python3 simpleslideshow/tests/check.py` checks timing, actual exports, crossfade pixels, audio fade, selected-range looping, separate MP3 cuts, cancellation and no-overwrite behavior (Pillow is needed only for test images). FFmpeg filter references: [xfade](https://ffmpeg.org/ffmpeg-filters.html#xfade), [afade](https://ffmpeg.org/ffmpeg-filters.html#afade).
 
 Original Simpleapps code is GPL-3.0-or-later. See the repository LICENSE and COPYING. FFmpeg and other external tools retain their own licenses.
+
+## Editable projects
+
+Use Project → Save (Ctrl+S) to save a `.simpleslideshow.project` file, and Project → Open (Ctrl+L) to restore it. You can also launch `simpleslideshow --project PATH`. Ordinary launches still start empty. Projects store media references, order, individual image holds, crop/zoom/focus, music in/out points and orientation; saving a project does not export a video. Keep referenced media with the project when moving it.
+
+Select a photo and expand “Selected image · timing & zoom” to adjust its hold (0 uses the default), zoom and horizontal/vertical focus. Fill frame crops to the selected orientation. Turn off “Fit images evenly to music” to use individual timings. Zoom and focus set the starting crop. End zoom adds a gentle animated zoom (1.00 keeps it still; 1.08 finishes 8% closer), continuous through crossfades. Source photos stay unchanged.
+
+Use Project → Load subtitles to choose a UTF-8 `.srt` file. Show subtitles toggles the overlay for preview and export. Subtitle times start at the slideshow beginning, including any intro. The project stores the subtitle path and toggle; text stays editable in the SRT file. FFmpeg needs the subtitles/libass filter.
+
+Fullscreen opens the slideshow preview in a separate fullscreen window. Click Fullscreen or press F11; Space pauses/resumes and Escape or F11 returns to the editor. Both views share the same playback position and audio. A missing preview is prepared first; this does not export a final video.
+
+Portrait previews and exports with subtitles reserve the bottom 10% for captions, so text stays clear of the photo. Fill frame crops to the remaining picture area.

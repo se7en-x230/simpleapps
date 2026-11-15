@@ -72,7 +72,7 @@ class Timeline(Gtk.DrawingArea):
             tint(.24 if i!=self.selected else .55);cr.rectangle(x,30,w,44);cr.fill()
             ink(.8);cr.rectangle(x+.5,30.5,max(0,w-1),43);cr.stroke()
             cr.save();cr.rectangle(x+3,31,max(0,w-6),42);cr.clip()
-            ink();text(x+5,47,f'{i+1} · {Path(item.path).name}',11);text(x+5,64,f'{end-start:.1f}s',10);cr.restore()
+            ink();text(x+5,47,f'{i+1} · {item.label or Path(item.path).name}',11);text(x+5,64,f'{end-start:.1f}s',10);cr.restore()
             if i<len(p.items)-1:
                 ink(.23);cr.rectangle(self.x(end-p.fade/FPS),30,max(1,self.x(end)-self.x(end-p.fade/FPS)),44);cr.fill()
         ink(.10);cr.rectangle(self.LEFT,84,width-self.LEFT-10,35);cr.fill()

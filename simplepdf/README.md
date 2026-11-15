@@ -28,9 +28,9 @@ An empty state_dir uses `$XDG_STATE_HOME/simplepdf`. Custom paths support tilde/
 
 ## Keys
 
-- h/j/k/l scroll; d/u half-page; Ctrl+d/u, PageDown/PageUp or Space/Backspace change pages.
+- h/j/k/l scroll; Ctrl+d/u (or d/u) scroll half a page; J/K, PageDown/PageUp or Space/Backspace change pages.
 - gg/G first/last page; a number then G or `:` jumps to a page.
-- J/K or −/+ zoom; ;w fits width; ;p fits the page.
+- −/+ zoom; ;w fits width; ;p fits the page.
 - / searches; n/N selects the next/previous highlighted match.
 - R rotates the view; i inverts colours; r reloads; p prints.
 - ;b adds a named bookmark; ;l lists bookmarks; Tab opens the PDF contents; f lists links for keyboard selection.

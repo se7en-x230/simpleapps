@@ -284,13 +284,13 @@ def main(argv=None):
             self.guide.set_text('j/k notes · h/l list/preview · i edit · n new · p paste new · a append · y copy · / search · gg/G · N folder · Ctrl+s save · Esc/q close · ? keys')
 
         def preview_mode(self):
-            self.mode='preview';self.editor.set_editable(False);self.editor.grab_focus()
-            self.guide.set_text('h/j/k/l move · gg/G start/end · Ctrl+u/d page · i edit · h at start or Ctrl+Enter: note list · Esc close · y copy · Ctrl+s save')
+            self.mode='preview';self.prefix='';self.editor.set_editable(False);self.editor.grab_focus()
+            self.guide.set_text('NORMAL · h/j/k/l w/b/e move · i/a/I/A/o/O insert · x/dd delete · u undo · Ctrl+r redo · Ctrl+Enter notes · q close')
 
         def edit(self):
             if self.path is None:return
             self.mode='edit';self.editor.set_editable(True);self.editor.grab_focus()
-            self.guide.set_text('EDIT · type normally · Ctrl+z undo · Ctrl+Shift+z redo · Ctrl+s save · Ctrl+Shift+s save copy · Ctrl+Enter: notes · Esc close · '+('autosave after a pause' if options['autosave'] else 'manual save'))
+            self.guide.set_text('INSERT · type normally · Ctrl+z undo · Ctrl+Shift+z redo · Ctrl+s save · Ctrl+Shift+s save copy · Ctrl+Enter: notes · Esc Normal · '+('autosave after a pause' if options['autosave'] else 'manual save'))
 
         def refresh(self,focus=None,edit=False):
             if not self.save():return
@@ -424,11 +424,87 @@ def main(argv=None):
             return True
 
         def help(self,*_):
-            dialog=Gtk.MessageDialog(transient_for=self.win,modal=True,buttons=Gtk.ButtonsType.CLOSE,text='Simplenotes keys',secondary_text='LIST: j/k or arrows select · gg/G first/last · Ctrl+u/d jump · l preview · i/Enter edit · / search · Ctrl+J/K select while searching · Ctrl+Enter list · Esc closes\n\nNOTES: n new · Shift+n new folder · p new from clipboard · a append clipboard · y copy text · Shift+y copy file reference · Shift+r recover draft · Ctrl+r refresh\n\nEDITOR: i enters text editing; type normally. Ctrl+Enter returns to notes. Esc closes and saves. Ctrl+s save · Ctrl+Shift+s save copy · Ctrl+z undo · Ctrl+Shift+z redo · Ctrl+a/c/v select/copy/paste\n\nPreview uses h/j/k/l to move and gg/G for start/end. Esc closes; q also closes outside text entry. Notes autosave after a short pause. External changes are never silently overwritten.')
+            dialog=Gtk.MessageDialog(transient_for=self.win,modal=True,buttons=Gtk.ButtonsType.CLOSE,text='Simplenotes keys',secondary_text='LIST: j/k or arrows select · gg/G first/last · Ctrl+u/d jump · l preview · i/Enter edit · / search · Ctrl+J/K select while searching · Ctrl+Enter list · Esc closes\n\nNOTES: n new · Shift+n new folder · p new from clipboard · a append clipboard · y copy text · Shift+y copy file reference · Shift+r recover draft · Ctrl+r refresh\n\nEDITOR: i enters text editing; type normally. Ctrl+Enter returns to notes. Esc returns to Normal mode. Ctrl+s save · Ctrl+Shift+s save copy · Ctrl+z undo · Ctrl+Shift+z redo · Ctrl+a/c/v select/copy/paste\n\nNORMAL: h/j/k/l, w/b/e, 0/^/$ and gg/G move; i/a/I/A/o/O insert; x/dd delete; u undo; Ctrl+r redo. q closes outside text entry. Notes autosave after a short pause. External changes are never silently overwritten.')
             dialog_keys(dialog)
             dialog.connect('response',lambda d,*_:d.destroy());dialog.present()
 
+        def normal_key(self,key,state):
+            ctrl=bool(state&Gdk.ModifierType.CONTROL_MASK)
+            char=chr(Gdk.keyval_to_unicode(key)) if Gdk.keyval_to_unicode(key) else ''
+            buf=self.buffer; it=buf.get_iter_at_mark(buf.get_insert())
+            if ctrl:
+                if key==Gdk.KEY_r:
+                    if buf.get_can_redo():buf.redo()
+                    return True
+                return False
+            char={Gdk.KEY_Left:'h',Gdk.KEY_Down:'j',Gdk.KEY_Up:'k',Gdk.KEY_Right:'l'}.get(key,char)
+            prefix=self.prefix;self.prefix=''
+            if prefix=='d':
+                if char=='d':
+                    start=it.copy();start.set_line_offset(0);end=start.copy()
+                    if not end.forward_line():
+                        end=buf.get_end_iter()
+                        if not start.is_start():start.backward_char()
+                    buf.begin_user_action();buf.delete(start,end);buf.end_user_action()
+                return True
+            if char=='d':self.prefix='d';return True
+            if char in ('i','a','I','A','o','O'):
+                if char=='a' and not it.ends_line():it.forward_char()
+                elif char=='I':
+                    it.set_line_offset(0)
+                    while not it.ends_line() and it.get_char() in ' \t':it.forward_char()
+                elif char=='A':
+                    if not it.ends_line():it.forward_to_line_end()
+                elif char in ('o','O'):
+                    if char=='o':
+                        if not it.ends_line():it.forward_to_line_end()
+                    else:it.set_line_offset(0)
+                    buf.begin_user_action();buf.insert(it,'\n');buf.end_user_action()
+                    if char=='O':it.backward_char()
+                buf.place_cursor(it);self.edit();return True
+            if char=='u':
+                if buf.get_can_undo():buf.undo()
+                return True
+            if char=='x':
+                if not it.ends_line() and not it.is_end():
+                    end=it.copy();end.forward_char();buf.begin_user_action();buf.delete(it,end);buf.end_user_action()
+                return True
+            if char in ('w','b','e'):
+                import re
+                offset=it.get_offset();words=list(re.finditer(r'\w+|[^\w\s]+',self.text()))
+                if char=='w':target=next((m.start() for m in words if m.start()>offset),buf.get_char_count())
+                elif char=='b':target=next((m.start() for m in reversed(words) if m.start()<offset),0)
+                else:target=next((m.end()-1 for m in words if m.end()-1>offset),max(0,buf.get_char_count()-1))
+                it=buf.get_iter_at_offset(target)
+            elif char in ('0','^','$'):
+                if char=='$':
+                    if not it.ends_line():it.forward_to_line_end()
+                    if not it.starts_line():it.backward_char()
+                else:
+                    it.set_line_offset(0)
+                    if char=='^':
+                        while not it.ends_line() and it.get_char() in ' \t':it.forward_char()
+            elif char in ('h','j','k','l'):
+                if char in ('j','k'):
+                    column=it.get_line_offset()
+                    if char=='j':
+                        if it.get_line()+1<buf.get_line_count():it.forward_line()
+                    elif it.get_line()>0:it.backward_line()
+                    end=it.copy()
+                    if not end.ends_line():end.forward_to_line_end()
+                    it.set_line_offset(min(column,max(0,end.get_line_offset()-1)))
+                elif char=='h' and not it.starts_line():it.backward_char()
+                elif char=='l' and not it.ends_line():
+                    end=it.copy();end.forward_char()
+                    if not end.ends_line():it=end
+            else:
+                self.prefix=prefix
+                return False
+            buf.place_cursor(it);self.editor.scroll_mark_onscreen(buf.get_insert());return True
+
         def key(self,controller,key,code,state):
+            if key==Gdk.KEY_Escape and self.mode in ('edit','preview'):
+                self.preview_mode();self.save();return True
             handled = control_key(self.win, key, state)
             if handled is not None:
                 if hasattr(self, 'prefix'): self.prefix = ''
@@ -451,6 +527,7 @@ def main(argv=None):
                 widget=widget.get_parent()
             if self.mode=='edit':return False
             char=chr(Gdk.keyval_to_unicode(key)) if Gdk.keyval_to_unicode(key) else ''
+            if self.mode=='preview' and self.normal_key(key,state):return True
             if ctrl and key==Gdk.KEY_r:self.refresh();return True
             if ctrl and key in (Gdk.KEY_u,Gdk.KEY_d):
                 if self.mode=='list':self.move(-10 if key==Gdk.KEY_u else 10)

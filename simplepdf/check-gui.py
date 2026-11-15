@@ -29,6 +29,11 @@ def patched(win):
             assert len(app.hits)==3,len(app.hits)
             app.next_hit(1);assert app.page==1
             app.key(None,Gdk.KEY_G,0,0);assert app.page==2
+            app.goto(0);zoom=app.zoom
+            app.key(None,Gdk.KEY_J,0,Gdk.ModifierType.SHIFT_MASK);assert app.page==1 and app.zoom==zoom
+            app.key(None,Gdk.KEY_K,0,Gdk.ModifierType.SHIFT_MASK);assert app.page==0
+            app.key(None,Gdk.KEY_d,0,Gdk.ModifierType.CONTROL_MASK);assert app.page==0
+            app.key(None,Gdk.KEY_plus,0,0);assert app.zoom>zoom
             app.set_fit('width');app.layout()
             print('PASS: render, page navigation, saved position/rotation/bookmarks, search highlights, empty outline, fit width',flush=True)
         except BaseException as e:errors.append(e)

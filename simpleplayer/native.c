@@ -242,6 +242,11 @@ static void search_action(SimpleUISearchAction action,gpointer unused) {
 static gboolean keys(GtkEventControllerKey *controller,guint key,guint code,GdkModifierType state,gpointer unused) {
     (void)controller;(void)code;(void)unused;
 
+    /* The player closes in one step, including while search has focus. */
+    if(key==GDK_KEY_Escape) {
+        gtk_window_close(GTK_WINDOW(window));
+        return TRUE;
+    }
     int control_result=simple_control_key(GTK_WINDOW(window),key,state);
     if(control_result>=0)return control_result;
     gboolean after_g=gprefix;gprefix=FALSE;
@@ -250,10 +255,6 @@ static gboolean keys(GtkEventControllerKey *controller,guint key,guint code,GdkM
     gboolean typing=focus&&(focus==search||gtk_widget_is_ancestor(focus,search));
     if((state&(GDK_CONTROL_MASK|GDK_ALT_MASK|GDK_SUPER_MASK))==GDK_CONTROL_MASK&&(key==GDK_KEY_h||key==GDK_KEY_l)){choose_source(NULL,GUINT_TO_POINTER((source_index+(key==GDK_KEY_l?1:2))%3));return TRUE;}
     if((state&GDK_CONTROL_MASK)&&key==GDK_KEY_r){rescan(NULL,NULL);return TRUE;}
-    if(key==GDK_KEY_Escape) {
-        gtk_window_close(GTK_WINDOW(window));
-        return TRUE;
-    }
     if(gtk_widget_get_visible(browser)) {
         if((state&GDK_CONTROL_MASK)&&(key==GDK_KEY_j||key==GDK_KEY_k)){
             move_selection(key==GDK_KEY_j?1:-1,typing);return TRUE;

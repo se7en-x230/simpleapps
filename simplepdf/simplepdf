@@ -146,7 +146,7 @@ def main():
             except (OSError,ValueError,TypeError) as e:self.message(str(e))
 
         def report(self):
-            if self.doc:self.message(f'{self.page+1} / {self.doc.get_n_pages()} · {self.zoom:.0%} · h/j/k/l scroll · Ctrl+d/u pages · / search · ? keys')
+            if self.doc:self.message(f'{self.page+1} / {self.doc.get_n_pages()} · {self.zoom:.0%} · h/j/k/l scroll · J/K pages · / search · ? keys')
 
         def layout(self):
             if not self.doc:return
@@ -325,9 +325,9 @@ def main():
 
         def help(self):
             self.popup('Simplepdf keys',[(text,lambda:None) for text in [
-                'h/j/k/l scroll · d/u half page · Ctrl+d/u next/previous',
+                'h/j/k/l scroll · Ctrl+d/u half page · J/K next/previous',
                 'gg / G first/last · digits+G page · : page number',
-                'J/K or −/+ zoom · ;w fit width · ;p fit page',
+                '−/+ zoom · ;w fit width · ;p fit page',
                 '/ search · n/N matches · t contents · Tab/Shift+Tab controls · f links',
                 'R rotate · i invert colours · r reload · p print',
                 ';b add bookmark · ;l list bookmarks',
@@ -375,9 +375,9 @@ def main():
             elif name=='R':self.rotation=(self.rotation+90)%360;self.layout()
             elif name=='i':self.dark=not self.dark;self.area.queue_draw()
             elif name=='y' and self.doc:self.win.get_clipboard().set(self.doc.get_page(self.page).get_text());self.message('Page text copied')
-            elif name in ('J','K','plus','equal','minus'):
-                self.fit='';self.zoom=max(.1,min(5,self.zoom*(1.15 if name in ('K','plus','equal') else 1/1.15)));self.layout();self.report()
-            elif name in ('d','u') and state&Gdk.ModifierType.CONTROL_MASK:self.goto(self.page+(1 if name=='d' else -1))
+            elif name in ('plus','equal','minus'):
+                self.fit='';self.zoom=max(.1,min(5,self.zoom*(1.15 if name in ('plus','equal') else 1/1.15)));self.layout();self.report()
+            elif name in ('J','K'):self.goto(self.page+(1 if name=='J' else -1))
             elif name in ('Page_Down','Page_Up','space','BackSpace'):self.goto(self.page+(1 if name in ('Page_Down','space') else -1))
             elif name in ('h','j','k','l','d','u'):
                 adj=self.scroll.get_hadjustment() if name in ('h','l') else self.scroll.get_vadjustment()

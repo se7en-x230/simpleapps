@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Small keyboard-driven front end for FFmpeg. GPL-3.0-or-later."""
 from pathlib import Path
+from dataclasses import replace
 import configparser
 import os
 import shutil
@@ -17,10 +18,12 @@ for shared in (Path(__file__).resolve().parent.parent/'simple-common',
 from simple_ui import attach, control_key, KeyBindings
 import gi
 gi.require_version('Gtk','4.0')
-from gi.repository import Gtk,Gdk,Gio,GLib
-from render import Media,probe,plan,Renderer,Cancelled,audio_range,folder_images
+gi.require_version("GdkPixbuf","2.0")
+from gi.repository import Gtk,Gdk,Gio,GLib,GdkPixbuf
+from render import Media,probe,plan,Renderer,Cancelled,audio_range,folder_images,refresh_media
 
 from timeline import Timeline
+from project import read_project,write_project
 
 CONFIG=Path(os.environ.get('XDG_CONFIG_HOME',Path.home()/'.config'))/'simpleslideshow'
 
@@ -32,7 +35,7 @@ def label(text='',style=None):
     return w
 
 class App(Gtk.Application):
-    def __init__(self,paths=()):
+    def __init__(self,paths=(),project=None):
         super().__init__(application_id='space.go7.Simpleslideshow',flags=Gio.ApplicationFlags.NON_UNIQUE)
         CONFIG.mkdir(parents=True,exist_ok=True)
         if not (CONFIG/'keys.ini').exists():
@@ -42,12 +45,13 @@ class App(Gtk.Application):
         # Add only newly introduced actions; keep all existing user bindings.
         keyfile=configparser.ConfigParser(interpolation=None);keyfile.read(CONFIG/'keys.ini')
         if not keyfile.has_section('navigation'):keyfile.add_section('navigation')
-        additions={'play_slideshow':'space','folder':'b,<Control><Shift>o','audio_in':'i','audio_out':'o','listen_audio':'u'};updated=False
+        additions={'fullscreen':'F11','open_project':'<Control>l','save_project':'<Control>s','play_slideshow':'space','folder':'b,<Control><Shift>o','audio_in':'i','audio_out':'o','listen_audio':'u'};updated=False
         for action,value in additions.items():
             if not keyfile.has_option('navigation',action):keyfile.set('navigation',action,value);updated=True
         if updated:
             with (CONFIG/'keys.ini').open('w') as f:keyfile.write(f)
-        self.preview_temp=None;self.preview_key=None;self.preview_stamp=None;self.stream=None
+        self.full_window=None;self.preview_temp=None;self.preview_key=None;self.preview_stamp=None;self.stream=None
+        self.subtitles=None;self.project_path=None;self.initial_project=project;self.image_loading=False
         self.audio_process=None;self.audio_loading=False
         self.keys=KeyBindings('simpleslideshow');self.items=[];self.music=None;self.busy=False;self.renderer=None;self.external=None;self.initial=paths;self.last_exports=();self.cancel_worker=False;self.close_pending=False
         self.connect('activate',self.activate)
@@ -61,6 +65,10 @@ class App(Gtk.Application):
         bar=box(False,8);root.append(bar);self.controls=[]
         for name,action,callback in [('Add media','add',self.add),('Add folder','folder',self.add_folder),('Music','music',self.choose_music),('Title image','title',self.capture_title),('Preview item','preview',self.preview),('Export both','export',self.export)]:
             b=Gtk.Button(label=f'{name} · {self.keys.label(action)}');b.connect('clicked',lambda _,fn=callback:fn());bar.append(b);self.controls.append(b)
+        menu=Gtk.MenuButton(label='Project');popover=Gtk.Popover();menu.set_popover(popover);choices=box(spacing=6)
+        for text,callback in [('Open project · Ctrl+L',self.open_project),('Save project · Ctrl+S',self.save_project),('Save project as…',lambda:self.project_dialog(True)),('Load subtitles (.srt)…',self.choose_subtitles)]:
+            button=Gtk.Button(label=text);button.connect('clicked',lambda _,fn=callback:(popover.popdown(),fn()));choices.append(button)
+        popover.set_child(choices);bar.append(menu);self.controls.append(menu)
         self.cancel_button=Gtk.Button(label='Cancel');self.cancel_button.connect('clicked',lambda *_:self.cancel());self.cancel_button.set_visible(False);bar.append(self.cancel_button)
         content=Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL);content.set_vexpand(True);content.set_position(450);root.append(content)
         left=box();left.add_css_class('card');content.set_start_child(left);left.append(label('ORDER · j/k move · Shift+j/k reorder','heading'))
@@ -69,12 +77,19 @@ class App(Gtk.Application):
         actions=box(False,8);left.append(actions)
         for text,fn in [('↑ Earlier',lambda:self.reorder(-1)),('↓ Later',lambda:self.reorder(1)),('Remove',self.remove)]:
             b=Gtk.Button(label=text);b.connect('clicked',lambda _,f=fn:f());actions.append(b);self.controls.append(b)
+        self.image_adjust=Gtk.Expander(label='Selected image · timing & zoom');left.append(self.image_adjust)
+        adjustments=box(spacing=5);self.image_adjust.set_child(adjustments)
+        self.image_spins=[]
+        for name,minimum,maximum,step,value in [('Hold seconds · 0 = default',0,300,.1,0),('Zoom',1,8,.05,1),('Focus left / right %',0,100,1,50),('Focus top / bottom %',0,100,1,50),('End zoom · gentle motion',1,1.3,.01,1)]:
+            row=box(False,8);row.append(label(name));spin=Gtk.SpinButton.new_with_range(minimum,maximum,step);spin.set_digits(2 if step<1 else 0);spin.set_value(value);spin.set_hexpand(True);row.append(spin);adjustments.append(row);self.image_spins.append(spin);spin.connect('value-changed',self.image_edited)
+        self.image_fill=Gtk.CheckButton(label='Fill frame · crop to orientation');self.image_fill.connect('toggled',self.image_edited);adjustments.append(self.image_fill)
         right=box();right.add_css_class('card');content.set_end_child(right)
         self.picture=Gtk.Picture();self.picture.set_can_shrink(True);self.picture.set_content_fit(Gtk.ContentFit.CONTAIN);self.picture.set_vexpand(True);self.picture.set_size_request(240,180);self.preview_stack=Gtk.Stack();self.preview_stack.set_vexpand(True);self.preview_stack.add_named(self.picture,'item');self.video=Gtk.Video();self.video.set_autoplay(False);self.video.set_vexpand(True);self.video.set_size_request(240,180);self.preview_stack.add_named(self.video,'slideshow');right.append(self.preview_stack)
         self.caption=label('Add photos or video clips to begin.','muted');right.append(self.caption)
         playback=box(False,8);right.append(playback)
         self.play_button=Gtk.Button(label='▶ Play slideshow · Space');self.play_button.connect('clicked',lambda *_:self.play_slideshow());playback.append(self.play_button);self.controls.append(self.play_button)
         stop=Gtk.Button(label='Stop');stop.connect('clicked',lambda *_:self.stop_preview());playback.append(stop);self.controls.append(stop)
+        self.full_button=Gtk.Button(label='Fullscreen');self.full_button.set_tooltip_text('Fullscreen preview · F11');self.full_button.connect('clicked',lambda *_:self.toggle_fullscreen());playback.append(self.full_button);self.controls.append(self.full_button)
         self.play_time=label('0:00 / 0:00','muted');playback.append(self.play_time)
         self.timeline=Timeline(self.timeline_select,self.timeline_reorder,lambda seconds:self.play_slideshow(seconds));root.append(self.timeline)
         settings=box();root.append(settings)
@@ -92,21 +107,23 @@ class App(Gtk.Application):
         for spin in (self.music_in,self.music_out):spin.connect('value-changed',self.audio_changed)
         timing=box(False,14);settings.append(timing)
         timing.append(label('Seconds / photo'));self.seconds=Gtk.SpinButton.new_with_range(1,60,.5);self.seconds.set_value(4);timing.append(self.seconds)
-        self.fit=Gtk.CheckButton(label='Fit images to music · f');timing.append(self.fit)
+        self.fit=Gtk.CheckButton(label='Fit images evenly to music · f');timing.append(self.fit)
         self.orientation=Gtk.DropDown.new_from_strings(['Landscape · 16:9','Portrait · 9:16']);timing.append(self.orientation)
         self.summary=label('','status');settings.append(self.summary)
         settings.append(label('Clips keep their length; clip audio is muted. Fixed timing loops/trims music and fades it out.','muted'))
+        self.subtitles_toggle=Gtk.CheckButton(label='Show subtitles');self.subtitles_toggle.set_active(True);self.subtitles_toggle.connect('toggled',self.changed);settings.append(self.subtitles_toggle)
         self.progress=Gtk.ProgressBar();self.progress.set_visible(False);root.append(self.progress)
         self.status=label('Ready. Add images or clips, then choose music.','status');root.append(self.status)
         root.append(label('a add · b folder · m music · t title image · j/k select · J/K reorder · x remove · f timing · p item · Space play · e export · Esc cancel/close','muted'))
-        for widget,signal in [(self.seconds,'value-changed'),(self.fit,'toggled'),(self.orientation,'notify::selected')]:widget.connect(signal,self.changed)
+        for widget,signal in [(self.seconds,'value-changed'),(self.fit,'toggled'),(self.orientation,'notify::selected')]:widget.connect(signal,self.orientation_changed if widget is self.orientation else self.changed)
         controller=Gtk.EventControllerKey();controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE);controller.connect('key-pressed',self.key);self.win.add_controller(controller)
         self.win.connect('close-request',self.close)
         self.refresh();self.win.present();self.list.grab_focus()
-        if self.initial:self.add_paths(self.initial)
+        if self.initial_project:self.open_project_path([self.initial_project])
+        elif self.initial:self.add_paths(self.initial)
 
     def current_plan(self):
-        return plan(self.items,self.music,self.fit.get_active(),self.seconds.get_value(),self.music_in.get_value(),self.music_out.get_value() if self.music else None)
+        return plan(self.items,self.music,self.fit.get_active(),self.seconds.get_value(),self.music_in.get_value(),self.music_out.get_value() if self.music else None,self.subtitles if self.subtitles_toggle.get_active() else None)
 
     def set_audio_range(self,start=0,end=None):
         self.audio_loading=True
@@ -132,6 +149,10 @@ class App(Gtk.Application):
         self.timeline.update(p,self.index())
         if self.preview_key and self.preview_key!=(p,self.orientation.get_selected()==1):self.stop_preview(clear=True)
         self.play_button.set_sensitive(bool(p) and not self.busy)
+        self.full_button.set_sensitive(bool(p) and not self.busy)
+        self.image_adjust.set_sensitive(not self.busy and 0<=self.index()<len(self.items) and self.items[self.index()].kind=='image')
+        self.image_spins[0].set_sensitive(not self.fit.get_active())
+        self.subtitles_toggle.set_sensitive(bool(self.subtitles) and not self.busy)
         self.audio_row.set_sensitive(bool(self.music) and not self.busy)
         if self.music:
             try:
@@ -151,18 +172,91 @@ class App(Gtk.Application):
             after=child.get_next_sibling();self.list.remove(child);child=after
         for n,item in enumerate(self.items):
             b=box(spacing=3);b.set_margin_top(8);b.set_margin_bottom(8);b.set_margin_start(8);b.set_margin_end(8)
-            name=label(f'{n+1:02}  {Path(item.path).name}');name.set_ellipsize(3);name.set_wrap(False);b.append(name)
-            b.append(label(('Image' if item.kind=='image' else f'Video · {item.duration:.1f}s')+(' · missing' if not Path(item.path).exists() else ''),'muted'));self.list.append(b)
+            name=label(f'{n+1:02}  {item.label or Path(item.path).name}');name.set_ellipsize(3);name.set_wrap(False);b.append(name)
+            b.append(label((('Image'+(f' · {item.duration:.2f}s' if item.duration else '')+(f' · {item.zoom:.2f}×' if item.zoom>1 else '')) if item.kind=='image' else f'Video · {item.duration:.1f}s')+(' · missing' if not Path(item.path).exists() else ''),'muted'));self.list.append(b)
         if self.items:self.list.select_row(self.list.get_row_at_index(max(0,min(index,len(self.items)-1))))
         else:self.picture.set_filename(None);self.caption.set_text('Add photos or video clips to begin.')
         self.changed()
 
     def selected(self,_,row):
-        if row is None:return
+        if row is None or not 0<=row.get_index()<len(self.items):return
         self.stop_preview()
         self.timeline.selected=row.get_index();self.timeline.queue_draw()
-        item=self.items[row.get_index()];self.picture.set_filename(item.path if item.kind=='image' else None)
+        item=self.items[row.get_index()]
+        self.image_loading=True
+        for spin,value in zip(self.image_spins,(item.duration if item.kind=='image' else 0,item.zoom,item.focus_x*100,item.focus_y*100,item.end_zoom)):spin.set_value(value)
+        self.image_fill.set_active(item.fill)
+        self.image_loading=False
+        self.show_image(item)
+        self.image_adjust.set_sensitive(not self.busy and item.kind=='image')
         self.caption.set_text(Path(item.path).name+(' · p to play clip' if item.kind=='video' else ''))
+
+    def orientation_changed(self,*_):
+        self.changed()
+        if 0<=self.index()<len(self.items):self.show_image(self.items[self.index()])
+
+    def show_image(self,item):
+        if item.kind!='image':self.picture.set_filename(None);return
+        try:
+            if item.zoom<=1 and not item.fill:self.picture.set_filename(item.path);return
+            pixbuf=GdkPixbuf.Pixbuf.new_from_file_at_scale(item.path,1200,1200,True).apply_embedded_orientation()
+            width,height=pixbuf.get_width(),pixbuf.get_height();ratio=(9/14.4 if self.subtitles and self.subtitles_toggle.get_active() else 9/16) if self.orientation.get_selected()==1 else 16/9
+            cw=min(width,height*ratio) if item.fill else width;ch=min(height,width/ratio) if item.fill else height
+            w=max(1,int(cw/item.zoom));h=max(1,int(ch/item.zoom))
+            x=max(0,min(width-w,int(width*item.focus_x-w/2)));y=max(0,min(height-h,int(height*item.focus_y-h/2)))
+            self.picture.set_paintable(Gdk.Texture.new_for_pixbuf(pixbuf.new_subpixbuf(x,y,w,h)))
+        except GLib.Error:self.picture.set_filename(item.path)
+
+    def image_edited(self,*_):
+        if self.image_loading or self.busy:return
+        i=self.index()
+        if i<0 or self.items[i].kind!='image':return
+        hold,zoom,x,y,end_zoom=[spin.get_value() for spin in self.image_spins]
+        self.items[i]=replace(self.items[i],duration=hold,zoom=zoom,focus_x=x/100,focus_y=y/100,fill=self.image_fill.get_active(),end_zoom=end_zoom)
+        self.refresh(i)
+
+    def choose_subtitles(self):
+        dialog=Gtk.FileDialog(title='Choose UTF-8 SRT subtitles')
+        def done(obj,result):
+            try:
+                path=obj.open_finish(result).get_path()
+                if not path or Path(path).suffix.lower()!='.srt':raise ValueError('Choose an .srt subtitle file.')
+                Path(path).read_text(encoding='utf-8');self.subtitles=path;self.subtitles_toggle.set_active(True);self.stop_preview(clear=True);self.changed()
+            except GLib.Error:pass
+            except (OSError,ValueError) as e:self.status.set_text(str(e))
+        dialog.open(self.win,None,done)
+
+    def open_project(self):self.project_dialog(False)
+    def project_dialog(self,save):
+        if self.busy:return
+        dialog=Gtk.FileDialog(title='Save slideshow project' if save else 'Open slideshow project')
+        if save:dialog.set_initial_name(self.project_path.name if self.project_path else 'Slideshow.simpleslideshow.project')
+        if self.project_path:dialog.set_initial_folder(Gio.File.new_for_path(str(self.project_path.parent)))
+        def done(obj,result):
+            try:
+                path=(obj.save_finish(result) if save else obj.open_finish(result)).get_path()
+                if not path:raise ValueError('Choose a local project file.')
+                if save:self.save_project_to(path)
+                else:self.open_project_path([path])
+            except GLib.Error:pass
+            except Exception as e:self.status.set_text(str(e))
+        if save:dialog.save(self.win,None,done)
+        else:dialog.open(self.win,None,done)
+    def open_project_path(self,paths):
+        def ready(data):
+            self.subtitles=data.get('subtitles');self.subtitles_toggle.set_active(data.get('subtitles_enabled',True));self.items=data['items'];self.music=data['music'];self.set_audio_range(data['music_in'],data['music_out'])
+            self.seconds.set_value(data['photo_seconds']);self.fit.set_active(data['fit']);self.orientation.set_selected(int(data['portrait']))
+            self.project_path=Path(paths[0]).absolute();self.refresh();self.status.set_text('Project loaded: '+self.project_path.name+' · Ctrl+S saves edits; nothing exported.')
+        self.work(lambda:read_project(paths[0]),ready)
+    def save_project(self):
+        if self.busy:return
+        if self.project_path:self.save_project_to(self.project_path)
+        else:self.project_dialog(True)
+    def save_project_to(self,path):
+        try:
+            self.project_path=write_project(path,self.items,self.music,self.seconds.get_value(),self.fit.get_active(),self.music_in.get_value(),self.music_out.get_value() if self.music else None,self.orientation.get_selected()==1,self.subtitles,self.subtitles_toggle.get_active())
+            self.status.set_text('Project saved: '+self.project_path.name+' · no video exported.')
+        except (OSError,ValueError) as e:self.status.set_text(str(e))
 
     def set_busy(self,value):
         self.busy=value
@@ -269,7 +363,44 @@ class App(Gtk.Application):
         if self.busy or source==destination:return
         self.items.insert(destination,self.items.pop(source));self.refresh(destination)
 
+    def leave_fullscreen(self,*_):
+        window=self.full_window
+        if window is None:return True
+        self.full_window=None
+        overlay=window.get_child();overlay.set_child(None);window.set_child(None)
+        self.preview_stack.add_named(self.video,'slideshow');self.preview_stack.set_visible_child_name('slideshow')
+        window.destroy();self.win.present()
+        return True
+
+    def show_fullscreen(self):
+        if not self.stream:return
+        if self.full_window:self.full_window.present();return
+        window=Gtk.Window(application=self,title='Simpleslideshow · Preview',transient_for=self.win)
+        self.full_window=window;window.set_decorated(False)
+        overlay=Gtk.Overlay();window.set_child(overlay);self.preview_stack.remove(self.video);overlay.set_child(self.video)
+        css=Gtk.CssProvider();css.load_from_data(b'window.fullscreen-preview { background: #000; }')
+        window.add_css_class('fullscreen-preview');window.get_style_context().add_provider(css,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        leave=Gtk.Button(label='Return to editor · Esc');leave.set_halign(Gtk.Align.END);leave.set_valign(Gtk.Align.START);leave.set_margin_top(12);leave.set_margin_end(12);leave.connect('clicked',self.leave_fullscreen);overlay.add_overlay(leave)
+        controller=Gtk.EventControllerKey();controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE);controller.connect('key-pressed',self.fullscreen_key);window.add_controller(controller)
+        window.connect('close-request',self.leave_fullscreen);window.fullscreen();window.present()
+
+    def fullscreen_key(self,_,key,code,state):
+        if key in (Gdk.KEY_Escape,Gdk.KEY_F11):self.leave_fullscreen();return True
+        if key==Gdk.KEY_space:
+            if self.stream:
+                if self.stream.get_playing():self.stream.pause()
+                else:
+                    if self.stream.get_ended():self.stream.seek(0)
+                    self.stream.play()
+            return True
+        return False
+
+    def toggle_fullscreen(self):
+        if self.full_window:self.leave_fullscreen()
+        else:self.play_slideshow(fullscreen=True)
+
     def stop_preview(self,clear=False):
+        self.leave_fullscreen()
         if self.stream:
             self.stream.pause()
             if not clear:self.stream.seek(0)
@@ -279,16 +410,20 @@ class App(Gtk.Application):
             self.video.set_media_stream(None);self.stream=None;self.preview_key=None;self.preview_stamp=None
             if self.preview_temp:self.preview_temp.cleanup();self.preview_temp=None
 
-    def play_slideshow(self,position=None):
+    def play_slideshow(self,position=None,fullscreen=False):
         if self.busy:return
         self.stop_audio()
         try:
             p=self.current_plan();portrait=self.orientation.get_selected()==1;key=(p,portrait)
             stamp=tuple((Path(item.path).stat().st_mtime_ns,Path(item.path).stat().st_size)
                         for item in (*p.items,*((p.music,) if p.music else ())))
+            if p.subtitles:
+                stat=Path(p.subtitles).stat();stamp+=((stat.st_mtime_ns,stat.st_size),)
         except (OSError,ValueError) as e:self.status.set_text(str(e));return
         if self.stream and key==self.preview_key and stamp==self.preview_stamp:
             self.preview_stack.set_visible_child_name('slideshow')
+            if fullscreen:
+                self.show_fullscreen();return
             if position is not None:self.stream.seek(round(position*1000000));self.stream.play()
             elif self.stream.get_playing():self.stream.pause()
             else:
@@ -304,13 +439,14 @@ class App(Gtk.Application):
             if self.cancel_worker:renderer.cancel();raise Cancelled('Preview cancelled.')
             temp=tempfile.TemporaryDirectory(prefix='simpleslideshow-preview-')
             try:
-                fresh=plan([probe(item.path) for item in p.items],probe(p.music.path,True) if p.music else None,p.fit,seconds,p.music_in,p.music_out)
+                fresh=plan([refresh_media(item) for item in p.items],probe(p.music.path,True) if p.music else None,p.fit,seconds,p.music_in,p.music_out,p.subtitles)
                 path=renderer.preview(fresh,Path(temp.name)/'preview.webm',progress,portrait)
                 return temp,path
             except BaseException:temp.cleanup();raise
         def ready(result):
             self.preview_temp,path=result;self.preview_key=key;self.preview_stamp=stamp
             stream=Gtk.MediaFile.new_for_filename(str(path));self.stream=stream;self.video.set_media_stream(stream)
+            stream.set_volume(1.0);stream.set_muted(False)
             self.preview_stack.set_visible_child_name('slideshow');self.caption.set_text('Full slideshow preview · music and crossfades')
             def state(*_):
                 if self.stream is not stream:return
@@ -329,6 +465,7 @@ class App(Gtk.Application):
                 self.play_time.set_text(f'{int(current)//60}:{int(current)%60:02} / {int(duration)//60}:{int(duration)%60:02}')
                 return True
             GLib.timeout_add(100,tick)
+            if fullscreen:self.show_fullscreen()
         self.work(render,ready,lambda value:value[0].cleanup() if value else None)
 
     def capture_title(self):
@@ -379,8 +516,8 @@ class App(Gtk.Application):
             self.renderer=renderer
             if self.cancel_worker:renderer.cancel();raise Cancelled('Export cancelled.')
             # Refresh duration information in case source files changed since import.
-            items=[probe(item.path) for item in p.items];music=probe(p.music.path,True) if p.music else None
-            fresh=plan(items,music,p.fit,self.seconds_value,p.music_in,p.music_out)
+            items=[refresh_media(item) for item in p.items];music=probe(p.music.path,True) if p.music else None
+            fresh=plan(items,music,p.fit,self.seconds_value,p.music_in,p.music_out,p.subtitles)
             return renderer.export_pair(fresh,paths[0],progress,portrait)
         def done(exports):self.last_exports=exports;self.status.set_text('Saved: '+exports[0].name+' + '+exports[1].name)
         self.seconds_value=self.seconds.get_value();self.work(run,done)
@@ -457,11 +594,12 @@ class App(Gtk.Application):
             return True
         if self.busy:return False
         if editing and not state&Gdk.ModifierType.CONTROL_MASK:return False
+        if self.keys.matches('fullscreen',key,state):self.toggle_fullscreen();return True
         if self.keys.matches('play_slideshow',key,state):self.play_slideshow();return True
         for action,callback in [('audio_in',lambda:self.focus_audio(self.music_in)),('audio_out',lambda:self.focus_audio(self.music_out)),('listen_audio',self.listen_audio)]:
             if self.keys.matches(action,key,state):
                 callback();return True
-        for action,callback in [('add',self.add),('folder',self.add_folder),('music',self.choose_music),('clear_music',self.clear_music),('title',self.capture_title),('export',self.export),('remove',self.remove),('move_up',lambda:self.reorder(-1)),('move_down',lambda:self.reorder(1)),('fit',lambda:self.fit.set_active(not self.fit.get_active())),('quit',self.win.close)]:
+        for action,callback in [('open_project',self.open_project),('save_project',self.save_project),('add',self.add),('folder',self.add_folder),('music',self.choose_music),('clear_music',self.clear_music),('title',self.capture_title),('export',self.export),('remove',self.remove),('move_up',lambda:self.reorder(-1)),('move_down',lambda:self.reorder(1)),('fit',lambda:self.fit.set_active(not self.fit.get_active())),('quit',self.win.close)]:
             if self.keys.matches(action,key,state):callback();return True
         if self.keys.matches('preview',key,state) and (key not in (Gdk.KEY_Return,Gdk.KEY_KP_Enter) or self.list.has_focus() or isinstance(focus,Gtk.ListBoxRow)):
             self.preview();return True
@@ -470,4 +608,6 @@ class App(Gtk.Application):
         return bool(control_key(self.win,key,state))
 
 if __name__=='__main__':
-    app=App(sys.argv[1:]);raise SystemExit(app.run([sys.argv[0]]))
+    import argparse
+    parser=argparse.ArgumentParser();parser.add_argument('--project');parser.add_argument('media',nargs='*');args=parser.parse_args()
+    app=App(args.media,args.project);raise SystemExit(app.run([sys.argv[0]]))
