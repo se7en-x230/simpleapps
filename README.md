@@ -83,8 +83,13 @@ Click a screenshot or app name for features, installation and keyboard controls.
 
 [![Simpleslideshow screenshot](docs/screenshots/simpleslideshow.png)](simpleslideshow/README.md)
 
-Images, short clips and music with Vim keys, one soft crossfade, and automatic
-high-quality + web MP4 exports. Fit images to music or fade music at the end.
+Make a slideshow from photos, short video clips, and music. Arrange media with Vim keys, use soft crossfades, and export both high-quality and smaller web MP4 videos.
+
+- Save editable projects and reopen them later, keeping media order, timing, framing, and music selections.
+- Fit photos to music or set individual hold times; crop, position, and add a gentle animated zoom.
+- Add editable SRT subtitles, preview fullscreen, and export in landscape or portrait. Portrait subtitles get a dedicated caption area.
+
+See the [slideshow maker guide](simpleslideshow/README.md) for controls and requirements.
 
 Screenshots use an isolated demo profile with sample content.
 
