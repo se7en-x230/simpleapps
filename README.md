@@ -188,7 +188,7 @@ Established libraries and tools handle the heavy work: Poppler renders PDFs, Gdk
 
 Apps share the C `libsimple-ui` base for theme loading and native keyboard handling. Python UI code uses a thin native adapter. App-specific layouts, navigation commands and data formats remain local; headless backends use the shared picker for optional menus. Runtime settings live under XDG config directories, normally `~/.config`; installed source snapshots live under `~/.local/src`. See each app’s page for its settings and portability limits.
 
-The shared GTK presentation uses orange upper-left titles, rounded pane cards, alternating gray list rows, orange action buttons and slim tabs with an orange active state. Shortcut suffixes on buttons use `simple_shortcut` (dark gray); set it with the other palette colors in `~/.config/simple/theme.css`. Pane framing and shortcut styling are applied by the shared library, including dynamically created controls.
+The shared GTK presentation uses orange upper-left titles, rounded pane cards, alternating gray list rows, orange action buttons and slim tabs with an orange active state. Shortcut suffixes on buttons use `simple_shortcut` (dark gray); set it with the other palette colors in `~/.config/simple/theme.css`. Pane framing and shortcut styling are applied by the shared library, including dynamically created controls. Action button colors use `simple_action_bg` and `simple_action_fg` in the same global theme. App CSS keeps only specialized styling; intentional exceptions belong in `~/.config/simple/overrides.css`. See [theme inheritance](simple-common/FRAMEWORK.md).
 
 ## Build without a distribution-specific package installer
 

@@ -22,14 +22,25 @@ apps. Shared infrastructure is unified; app-specific layouts and domain logic ar
 
 Call `simple_ui_window(window)` after creating a GTK window. It loads shared theme
 colors and the scoped `framework.css` component styles once per display. Only
-windows with `simple-app` are affected. Widgets are borrowed, never retained by the
+windows with `simple-app` and their transient dialogs are affected. Widgets are borrowed, never retained by the
 library. All API calls must run on the GTK main thread. Python uses PyGObject's
 native pointer capsule while retaining its wrapper for the duration of each call.
 
 Use the classes `title`, `heading`, `muted`, `status`, `card`, `value`, `simple-tabs`
 and `root`. Palette values remain in `~/.config/simple/theme.css`; common spacing,
 controls and selected-tab appearance live in `framework.css`. App CSS handles
-specialized content only. Theme changes apply when reopening an app.
+specialized content only. Do not duplicate standard button colors in app CSS.
+`simple_action_bg` and `simple_action_fg` control action buttons across the suite;
+they default to orange and near-black independently of window backgrounds.
+Inactive tabs, dropdowns, calendar navigation and keyboard keycaps remain neutral;
+dashboard data cards retain their own surface styling.
+
+For a deliberate exception, put a narrowly scoped selector and a comment explaining
+why in `~/.config/simple/overrides.css`. This optional file loads above the shared
+components (priority 805; framework 804); do not raise individual app providers to
+compete with defaults. For example, `window.simplemail button.special-action`
+affects only a button explicitly given that class. Ordinary app styles remain below
+the shared components. Theme changes apply when reopening an app.
 
 `simple_ui_control_key` returns -1 to continue app shortcuts, 0 to let GTK handle
 native controls/text, and 1 when it activated a focused control. Bind search before handling app-specific shortcuts. q closes outside editable fields;

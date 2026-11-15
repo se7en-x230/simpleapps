@@ -84,7 +84,7 @@ def main():
             self.win=Gtk.ApplicationWindow(application=self,title='Simplepdf'); attach(self.win)
             self.win.set_default_size(cfg['window_width'],cfg['window_height'])
             self.win.connect('close-request',self.close)
-            css=Gtk.CssProvider();css.load_from_data(b'window {background:@simple_bg;color:@simple_fg;} .title {color:@simple_heading;font-weight:bold;} button,entry {background:@simple_button;color:@simple_fg;} row:selected {background:@simple_accent;}')
+            css=Gtk.CssProvider();css.load_from_data(b'window {background:@simple_bg;color:@simple_fg;} .title {color:@simple_heading;font-weight:bold;} entry {background:@simple_button;color:@simple_fg;} row:selected {background:@simple_accent;}')
             Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(),css,Gtk.STYLE_PROVIDER_PRIORITY_USER+1)
             box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=4);self.win.set_child(box)
             bar=Gtk.Box(spacing=6);bar.set_margin_start(8);bar.set_margin_end(8);box.append(bar)

@@ -4,11 +4,6 @@ window.simpleplayer { background: @simple_bg; color: @simple_fg; }
 .simpleplayer .headline { font-size: 25px; font-weight: 700; }
 .simpleplayer .crumb, .simpleplayer .message { color: @simple_muted; font-size: 11px; }
 .simpleplayer entry { background: @simple_surface; color: @simple_fg; border: 1px solid @simple_border; border-radius: 10px; padding: 10px; box-shadow: none; }
-.simpleplayer button { background: @simple_button; color: @simple_fg; border: none; border-radius: 9px; padding: 9px 13px; box-shadow: none; }
-.simpleplayer button:hover { background: @simple_hover; }
-.simpleplayer button.primary { background: @simple_accent; color: @simple_on_accent; font-weight: 600; }
-.simpleplayer button.primary:hover { background: @simple_accent_hover; }
-.simpleplayer button:disabled { opacity: .4; }
 .simpleplayer list, .simpleplayer row { background: transparent; color: @simple_fg; }
 .simpleplayer row { border-radius: 10px; margin-bottom: 3px; }
 .simpleplayer row:hover { background: @simple_surface; }

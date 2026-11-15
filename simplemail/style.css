@@ -1,13 +1,10 @@
+/* Mail content only. Action buttons inherit the shared framework. */
 window.simplemail { background:@simple_bg;color:@simple_fg; }
-.simplemail label:not(.heading), .simplemail textview text { color:@simple_fg; }
+.simplemail textview text { color:@simple_fg; }
 .simplemail textview, .simplemail textview text, .simplemail list { background:@simple_bg; }
-.simplemail entry, .simplemail dropdown>button, .simplemail button { background:@simple_button;color:@simple_fg;border:1px solid @simple_border;box-shadow:none;text-shadow:none;padding:7px 10px; }
-.simplemail button:hover { background:@simple_hover; }
-.simplemail button:checked, .simplemail row:selected { background:@simple_selected;color:@simple_fg; }
-.simplemail button:focus-visible, .simplemail entry:focus-within { outline:2px solid @simple_accent;outline-offset:1px; }
+.simplemail entry { background:@simple_button;color:@simple_fg;border:1px solid @simple_border;box-shadow:none;text-shadow:none;padding:7px 10px; }
+.simplemail row:selected { background:@simple_selected;color:@simple_fg; }
 .simplemail selection { background:@simple_selected;color:@simple_fg; }
-.simplemail button.suggested-action { background:@simple_accent;color:@simple_on_accent; }
-.simplemail button.destructive-action { color:@simple_error; }
 .simplemail separator { background:@simple_border; }
 .simplemail image { color:@simple_accent; }
 
@@ -19,17 +16,3 @@ window.simplemail { background:@simple_bg;color:@simple_fg; }
     .simplemail-inbox .simplemail-unread .simplemail-sender { opacity: 1; font-weight: bold; }
 
     .simplemail-inbox .simplemail-account-bar { min-width: 4px; border-radius: 2px; }
-
-/* Orange actions, with neutral account selectors. */
-window.simplemail button,
-window.simplemail button:hover,
-window.simplemail button.suggested-action {
-    background: @simple_heading; background-image: none;
-    color: @simple_bg; border-color: @simple_heading;
-}
-window.simplemail button label,
-window.simplemail button:hover label { color: @simple_bg; }
-window.simplemail dropdown button,
-window.simplemail dropdown button:hover { background: @simple_button; color: @simple_fg; border-color: @simple_border; }
-window.simplemail dropdown button label,
-window.simplemail dropdown button:hover label { color: @simple_fg; }

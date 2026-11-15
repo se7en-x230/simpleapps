@@ -237,8 +237,8 @@ static void activate(GtkApplication *app,gpointer data){
         "window.simpletorrent {background:@simple_bg;color:@simple_fg;} .simpletorrent label {color:@simple_fg;}"
         ".simpletorrent .heading {color:@simple_panel_accent;font-weight:bold;font-size:1.2em;} .simpletorrent .muted {color:mix(@simple_fg,@simple_muted,.35);font-size:.9em;}"
         ".simpletorrent .transfer-summary {color:@simple_heading;font-weight:bold;background:@simple_surface;border:1px solid @simple_border;border-radius:8px;padding:10px 12px;}"
-        ".simpletorrent button,.simpletorrent entry {background:@simple_button;color:@simple_fg;border:1px solid @simple_border;border-radius:8px;padding:7px;}"
-        ".simpletorrent button:hover {background:@simple_hover;} .simpletorrent list {background:@simple_bg;} .simpletorrent row {padding:10px;border-bottom:1px solid @simple_border;}"
+        ".simpletorrent entry {background:@simple_button;color:@simple_fg;border:1px solid @simple_border;border-radius:8px;padding:7px;}"
+        ".simpletorrent list {background:@simple_bg;} .simpletorrent row {padding:10px;border-bottom:1px solid @simple_border;}"
         ".simpletorrent row:nth-child(even) {background:@simple_surface;} .simpletorrent row:selected {background:@simple_accent;} .simpletorrent row:selected label {color:@simple_on_accent;}"
         ".simpletorrent progressbar trough {background:@simple_button;background-image:none;border:0;box-shadow:none;margin:0;padding:0;min-width:0;min-height:3px;} .simpletorrent progressbar progress {background:@simple_calendar_moon;background-image:none;border:0;box-shadow:none;margin:0;padding:0;min-width:0;min-height:3px;}"
         ".simpletorrent progressbar.complete progress {background:@simple_muted;} .simpletorrent .running progressbar progress {background:@simple_calendar_moon;}");

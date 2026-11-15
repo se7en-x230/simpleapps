@@ -8,16 +8,7 @@ window.simple-app .muted { color: @simple_muted; }
 window.simple-app .heading { color: @simple_heading; font-size: 11px; font-weight: bold; letter-spacing: 1px; }
 window.simple-app .card { background: @simple_surface; border: 1px solid @simple_border; border-radius: 12px; padding: 18px; }
 window.simple-app .value { font-size: 29px; font-weight: bold; }
-window.simple-app button, window.simple-app entry { background: @simple_button; color: @simple_fg; border: 1px solid @simple_border; border-radius: 9px; box-shadow: none; }
-window.simple-app button { min-height: 28px; }
-window.simple-app button:checked { background: @simple_accent; color: @simple_on_accent; }
-window.simple-app button:checked label { color: @simple_on_accent; }
-window.simple-app .simple-tabs button { background: @simple_surface; color: @simple_fg; background-image: none; box-shadow: none; border: 1px solid @simple_border; border-radius: 8px; }
-/* Compact tabs retain the normal app text size. */
-window.simple-app .simple-tabs button,
-window.simple-app.websearch button { min-height: 20px; padding: 3px 12px; }
-window.simple-app .simple-tabs button:checked, window.simple-app.websearch button.suggested-action { background: @simple_heading; color: @simple_bg; border-bottom-color: @simple_heading; box-shadow: none; }
-window.simple-app .simple-tabs button:checked label, window.simple-app.websearch button.suggested-action label { color: @simple_bg; }
+window.simple-app entry { background: @simple_button; color: @simple_fg; border: 1px solid @simple_border; border-radius: 9px; box-shadow: none; }
 window.simple-app button:focus-visible, window.simple-app entry:focus-within { outline: 2px solid @simple_panel_accent; outline-offset: -2px; }
 window.simple-app selection { background: @simple_accent; color: @simple_on_accent; }
 window.simple-app .status { color: @simple_muted; font-size: 12px; }
@@ -89,14 +80,17 @@ window.simple-app .pane textview text { background: transparent; color: @simple_
 window.simple-app button,
 window.simple-app button.primary,
 window.simple-app button.suggested-action {
-    background: @simple_heading; color: @simple_bg; border-color: @simple_heading;
+    background: @simple_action_bg; color: @simple_action_fg;
     min-height: 20px; padding: 5px 12px; background-image: none;
+    border: 1px solid @simple_action_bg; border-radius: 9px; box-shadow: none; text-shadow: none;
 }
-window.simple-app button label { color: @simple_bg; }
-window.simple-app .simple-tabs button { background: @simple_surface; color: @simple_fg; border-color: @simple_border; padding: 3px 12px; }
+window.simple-app button label { color: @simple_action_fg; }
+window.simple-app button image { color: inherit; }
+window.simple-app.websearch button { min-height: 20px; padding: 3px 12px; }
+window.simple-app .simple-tabs button { background: @simple_surface; color: @simple_fg; border-color: @simple_border; border-radius: 8px; padding: 3px 12px; }
 window.simple-app .simple-tabs button label { color: @simple_fg; }
-window.simple-app .simple-tabs button:checked { background: @simple_heading; color: @simple_bg; border-color: @simple_heading; }
-window.simple-app .simple-tabs button:checked label { color: @simple_bg; }
+window.simple-app .simple-tabs button:checked { background: @simple_action_bg; color: @simple_action_fg; border-color: @simple_action_bg; }
+window.simple-app .simple-tabs button:checked label { color: @simple_action_fg; }
 window.simple-app button:disabled { opacity: 0.5; }
 /* Keep dropdown choices and calendar navigation lightweight. */
 window.simple-app dropdown button,
@@ -115,8 +109,8 @@ window.simple-app row:hover:not(:selected):not(.simplemail-selected) .muted,
 window.simple-app row:hover:not(:selected):not(.simplemail-selected) .status { color: @simple_muted; }
 window.simple-app row:hover:not(:selected):not(.simplemail-selected) .title,
 window.simple-app row:hover:not(:selected):not(.simplemail-selected) .heading { color: @simple_heading; }
-window.simple-app button:hover { background: @simple_heading; color: @simple_bg; }
-window.simple-app button:hover label { color: @simple_bg; }
+window.simple-app button:hover { background: @simple_action_bg; color: @simple_action_fg; }
+window.simple-app button:hover label { color: @simple_action_fg; }
 window.simple-app .simple-tabs button:hover:not(:checked) { background: @simple_surface; color: @simple_fg; }
 window.simple-app .simple-tabs button:hover:not(:checked) label { color: @simple_fg; }
 window.simple-app dropdown button:hover,

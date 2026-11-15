@@ -15,6 +15,10 @@
 @define-color simple_panel_accent #f3a40a;
 /* Shared app headings; app styles inherit this default. */
 @define-color simple_heading @simple_panel_accent;
+/* Action buttons: independent of window and heading colors. */
+@define-color simple_action_bg @simple_panel_accent;
+@define-color simple_action_fg #1a1a1a;
+
 @define-color simple_accent_hover @simple_hover;
 @define-color simple_on_accent #fff5ef;
 @define-color simple_attention #f4c76a;
@@ -119,12 +123,10 @@ window.simplelock .lock-password selection { background:@simple_selected; color:
 /* Common defaults also work when an app has no stylesheet. App CSS is optional. */
 window.simplekeyboard, window.simple-sound { background:@simple_bg; color:@simple_fg; }
 window.simplekeyboard label, window.simple-sound label { color:@simple_fg; }
-window.simplekeyboard button, window.simple-sound button,
-window.simplemail button, window.simplemail entry, window.simplekeyboard entry {
+window.simplemail entry, window.simplekeyboard entry {
     background:@simple_button; color:@simple_fg; border:1px solid @simple_border;
     border-radius:9px; box-shadow:none;
 }
-window.simplekeyboard button:hover, window.simple-sound button:hover { background:@simple_hover; }
 window.simplekeyboard button:focus-visible, window.simple-sound button:focus-visible {
     border-color:@simple_accent; outline:2px solid @simple_accent; outline-offset:-3px;
 }
@@ -137,8 +139,6 @@ window.simplepicker .item-box { color:@simple_fg; }
 window.simplepicker row:selected .item-box { background:@simple_selected; }
 window.simplepicker entry { background:@simple_surface; color:@simple_fg; caret-color:@simple_accent; }
 window.simplepicker image { color:@simple_accent; }
-window.simplepicker-power button { background:@simple_button; color:@simple_fg; }
-window.simplepicker-power button:hover { background:@simple_hover; }
 window.dashboard .dash-system, window.simple-sound .sound-card { background:@simple_surface; }
 window.dashboard calendar .today { color:@simple_accent; }
 window.simplemail { background:@simple_bg; color:@simple_fg; }
@@ -260,16 +260,12 @@ window.simple-calendar-app .moon { color:@simple_calendar_moon; }
 window.simple-calendar-app .buddhist { color:@simple_calendar_buddhist; }
 window.simple-calendar-app .card { background:@simple_surface; border:1px solid @simple_border; border-radius:12px; padding:12px; }
 window.simple-calendar-app .card.active-event { border-color:@simple_accent; box-shadow:inset 3px 0 @simple_accent; }
-window.simple-calendar-app button, window.simple-calendar-app entry, window.simple-calendar-app dropdown {
+window.simple-calendar-app entry, window.simple-calendar-app dropdown {
  background:@simple_button; color:@simple_fg; border:1px solid @simple_border; border-radius:9px; box-shadow:none;
 }
 window.simple-calendar-app button { padding:7px 12px; }
-window.simple-calendar-app button:hover { background:@simple_hover; }
 window.simple-calendar-app button:focus-visible, window.simple-calendar-app entry:focus-within,
 window.simple-calendar-app .card:focus-visible { outline:2px solid @simple_accent; outline-offset:-2px; }
-window.simple-calendar-app button.primary { background:@simple_accent; color:@simple_on_accent; }
-window.simple-calendar-app button.primary:hover { background:shade(@simple_accent,1.25); }
-window.simple-calendar-app button.primary label { color:@simple_on_accent; }
 window.simple-calendar-app text, window.simple-calendar-app textview { background:@simple_surface; color:@simple_fg; caret-color:@simple_bright; }
 window.simple-calendar-app selection { background:@simple_accent; color:@simple_on_accent; }
 window.simple-calendar-app calendar { padding:12px; font-size:1rem; background:@simple_surface; border:1px solid @simple_border; border-radius:12px; }

@@ -130,7 +130,7 @@ def gui(cfg,args):
 
         def do_activate(self):
             self.win=Gtk.ApplicationWindow(application=self,title='Simpleimage'); attach(self.win);self.win.set_default_size(cfg['window_width'],cfg['window_height']);self.win.connect('close-request',self.close)
-            css=Gtk.CssProvider();css.load_from_data(b'window {background:@simple_bg;color:@simple_fg;} .title {color:@simple_heading;font-weight:bold;} button {background:@simple_button;color:@simple_fg;} button:focus {background:@simple_accent;color:@simple_on_accent;outline:2px solid @simple_heading;} gridview {background:@simple_bg;color:@simple_fg;} gridview label {color:@simple_fg;} gridview child:selected {background:@simple_accent;}')
+            css=Gtk.CssProvider();css.load_from_data(b'window {background:@simple_bg;color:@simple_fg;} .title {color:@simple_heading;font-weight:bold;} gridview {background:@simple_bg;color:@simple_fg;} gridview label {color:@simple_fg;} gridview child:selected {background:@simple_accent;}')
             Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(),css,Gtk.STYLE_PROVIDER_PRIORITY_USER+1)
             box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=3);self.win.set_child(box)
             self.bar=Gtk.Box(spacing=6);self.bar.set_margin_start(8);self.bar.set_margin_end(8);box.append(self.bar)

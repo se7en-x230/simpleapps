@@ -11,6 +11,10 @@
 @define-color simple_accent #8B0000;
 @define-color simple_panel_accent #f3a40a;
 @define-color simple_heading @simple_panel_accent;
+/* Action buttons: independent of window and heading colors. */
+@define-color simple_action_bg @simple_panel_accent;
+@define-color simple_action_fg #1a1a1a;
+
 @define-color simple_accent_hover @simple_hover;
 @define-color simple_on_accent #fff5ef;
 @define-color simple_attention #f4c76a;

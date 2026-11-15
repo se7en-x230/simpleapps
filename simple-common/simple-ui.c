@@ -49,6 +49,14 @@ static void shortcut_state(GtkWidget *button,GtkStateFlags previous,gpointer lab
 static gboolean shared_widget_mapped(GSignalInvocationHint *hint,guint count,const GValue *values,gpointer unused) {
     (void)hint;(void)count;(void)unused;
     GtkWidget *widget=g_value_get_object(values);GtkRoot *root=gtk_widget_get_root(widget);
+    if(root&&GTK_IS_WINDOW(root)&&!gtk_widget_has_css_class(GTK_WIDGET(root),"simple-app")) {
+        for(GtkWindow *parent=gtk_window_get_transient_for(GTK_WINDOW(root));parent;
+            parent=gtk_window_get_transient_for(parent)) {
+            if(gtk_widget_has_css_class(GTK_WIDGET(parent),"simple-app")) {
+                gtk_widget_add_css_class(GTK_WIDGET(root),"simple-app");break;
+            }
+        }
+    }
     if(!root||!gtk_widget_has_css_class(GTK_WIDGET(root),"simple-app"))return TRUE;
     GtkWidget *parent=gtk_widget_get_parent(widget);
     const char *css_name=gtk_widget_get_css_name(widget);
@@ -234,6 +242,14 @@ void simple_ui_init(void) {
     gtk_style_context_add_provider_for_display(display,GTK_STYLE_PROVIDER(css),GTK_STYLE_PROVIDER_PRIORITY_USER+4);
     g_object_set_data_full(G_OBJECT(display),"simple-ui-v1",css,g_object_unref);
     g_free(path);g_free(dir);
+    char *overrides=g_build_filename(g_get_user_config_dir(),"simple","overrides.css",NULL);
+    if(g_file_test(overrides,G_FILE_TEST_IS_REGULAR)) {
+        GtkCssProvider *custom=gtk_css_provider_new();
+        gtk_css_provider_load_from_path(custom,overrides);
+        gtk_style_context_add_provider_for_display(display,GTK_STYLE_PROVIDER(custom),GTK_STYLE_PROVIDER_PRIORITY_USER+5);
+        g_object_unref(custom);
+    }
+    g_free(overrides);
 }
 void simple_ui_window(GtkWindow *window) {
     simple_ui_init();
